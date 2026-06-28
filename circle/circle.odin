@@ -6,16 +6,24 @@ import "core:math/linalg"
 
 is_float :: intrinsics.type_is_float
 
-circle_area :: proc(radius: $T) -> T where is_float(T) {
+// Calculates the surface area of a circle ($A = \pi r^2$).
+// Works with floating-point types.
+area :: proc(radius: $T) -> T where is_float(T) {
 	return math.PI * radius * radius
 }
 
-circle_circumference :: proc(radius: $T) -> T where is_float(T) {
+// Calculates the true bounding circumference of a circle ($C = 2\pi r$).
+// Works with floating-point types.
+circumference :: proc(radius: $T) -> T where is_float(T) {
 	return math.TAU * radius
 }
 
-// gets the nearest point on the circle's boundary to the given point
-circle_project_to_boundary :: proc(point, origin: [2]$T, radius: T) -> [2]T where is_float(T) {
+// Snaps an external or internal point orthogonally onto the circle's perimeter edge boundary.
+//
+// If the target point lands perfectly at the circle's exact center coordinate, the projection 
+// direction defaults along the positive X-axis (`{radius, 0}`).
+// Works with floating-point types.
+project_to_boundary :: proc(point, origin: [2]$T, radius: T) -> [2]T where is_float(T) {
 	d := point - origin
 	dist := linalg.length(d)
 	if dist == 0 {
@@ -25,8 +33,10 @@ circle_project_to_boundary :: proc(point, origin: [2]$T, radius: T) -> [2]T wher
 	return origin + d / dist * radius
 }
 
-// clamps a point to within the circle (interior points are returned unchanged)
-circle_clamp_point :: proc(point, origin: [2]$T, radius: T) -> [2]T where is_float(T) {
+// Clamps an arbitrary point `point` so that it remains inside or on the circle's disk.
+// Points already situated inside the circle are returned completely unaltered.
+// Works with floating-point types.
+clamp_point :: proc(point, origin: [2]$T, radius: T) -> [2]T where is_float(T) {
 	d := point - origin
 	dist := linalg.length(d)
 	if dist <= radius {
@@ -35,42 +45,49 @@ circle_clamp_point :: proc(point, origin: [2]$T, radius: T) -> [2]T where is_flo
 	return origin + d / dist * radius
 }
 
-// returns true if the circle contains the point
-circle_has_point :: proc(point, origin: [2]$T, radius: T) -> bool where is_float(T) {
+// Tests whether a given point sits strictly within or on the bounding radius perimeter of a circle.
+// Employs a squared dot-product distance calculation to avoid expensive square roots.
+has_point :: proc(point, origin: [2]$T, radius: T) -> bool where is_float(T) {
 	d := point - origin
 	return linalg.dot(d, d) <= radius * radius
 }
 
-// returns the point on the boundary at the given angle (radians, 0 = +x axis)
-circle_point_at :: proc(origin: [2]$T, radius: T, angle: T) -> [2]T where is_float(T) {
+// Resolves a 2D coordinate point directly on the circle perimeter boundary at a specific angle.
+// The angle argument is parsed in radians, traveling counter-clockwise from the positive X-axis (0.0).
+point_at :: proc(origin: [2]$T, radius: T, angle: T) -> [2]T where is_float(T) {
 	return origin + [2]T{math.cos(angle), math.sin(angle)} * radius
 }
 
-// returns the unit tangent (counter-clockwise direction) at the given angle
-circle_tangent_at :: proc(angle: $T) -> [2]T where is_float(T) {
+// Computes the unit counter-clockwise tangent direction vector of a circle at a specific radial angle.
+// Invaluable for physics reflections, surface sliding, and orbital movement vectors.
+tangent_at :: proc(angle: $T) -> [2]T where is_float(T) {
 	return {-math.sin(angle), math.cos(angle)}
 }
 
-// returns the outward unit normal at the given angle
-circle_normal_at :: proc(angle: $T) -> [2]T where is_float(T) {
+// Computes the outward-facing unit normal vector stretching from a circle center at a given radial angle.
+normal_at :: proc(angle: $T) -> [2]T where is_float(T) {
 	return {math.cos(angle), math.sin(angle)}
 }
 
-// returns the angle (radians, 0 = +x axis) of a point as seen from the center
-circle_angle_of :: proc(point, origin: [2]$T) -> T where is_float(T) {
+// Derives the directional angular heading (in radians) of a point relative to the circle's center.
+// Returns an angle metric spanning between $-\pi$ and $+\pi$, with 0.0 resting along the positive X-axis.
+angle_of :: proc(point, origin: [2]$T) -> T where is_float(T) {
 	d := point - origin
 	return math.atan2(d.y, d.x)
 }
 
-// fits a circle to a closed polygon. The origin is the centroid of the contour
-// vertices; the fit mode selects how the radius is derived from the vertex
-// distances to that centroid.
+// Configuration options determining how a circle's radius is approximated from an input shape.
 Circle_Fit :: enum {
-	Min,
-	Max,
-	Average,
+	Min,     // Distance to the nearest vertex (largest inscribed circle approximation).
+	Max,     // Distance to the furthest vertex (smallest bounding/enclosing circle approximation).
+	Mean, // The arithmetic mean of all vertex distances relative to the shape center.
 }
-circle_from_contour :: proc(
+
+// Approximates a circle representation fitted to a closed 2D polygon contour map.
+//
+// The calculated circle origin is extracted from the arithmetic centroid of the shape vertices. 
+// The chosen `Circle_Fit` metric determines how the final boundary radius is selected.
+from_contour :: proc(
 	contour: [][2]$T,
 	fit: Circle_Fit,
 ) -> (origin: [2]T, radius: T) where is_float(T) {
@@ -84,20 +101,18 @@ circle_from_contour :: proc(
 	}
 	origin /= T(len(contour))
 
+	radius = 0 // Reset radius accumulator before evaluation
 	switch fit {
 	case .Min:
-		// distance to the nearest vertex (largest inscribed-ish circle)
 		radius = max(T)
 		for v in contour {
 			radius = min(radius, linalg.length(v - origin))
 		}
 	case .Max:
-		// distance to the farthest vertex (smallest enclosing-ish circle)
 		for v in contour {
 			radius = max(radius, linalg.length(v - origin))
 		}
-	case .Average:
-		// arithmetic mean of all vertex distances
+	case .Mean:
 		for v in contour {
 			radius += linalg.length(v - origin)
 		}
@@ -106,9 +121,11 @@ circle_from_contour :: proc(
 	return
 }
 
-// builds a polygon approximating the circle, with `segments` evenly spaced
-// vertices starting at angle 0 (the +x axis) and winding counter-clockwise
-circle_to_contour :: proc(
+// Generates a slice of evenly-spaced vertex coordinates tracking the path of a circle.
+//
+// The output contour array starts at angle 0.0 (positive X-axis) and winds counter-clockwise.
+// Memory allocation is handled explicitly through the provided `allocator` pipeline parameter.
+to_contour :: proc(
 	origin: [2]$T,
 	radius: T,
 	segments := 32,

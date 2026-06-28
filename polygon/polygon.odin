@@ -54,7 +54,7 @@ Interior_Rule :: enum {
 	Even_Odd,
 	Winding_Number,
 }
-polygon_has_point :: proc(
+has_point :: proc(
 	polygon: [][2]$T,
 	point: [2]T,
 	rule := Interior_Rule.Even_Odd,
@@ -104,7 +104,7 @@ polygon_has_point :: proc(
 }
 
 // returns true if the polygon is convex
-polygon_is_convex :: proc(polygon: [][2]$T) -> bool where is_float(T) {
+is_convex :: proc(polygon: [][2]$T) -> bool where is_float(T) {
 	n := len(polygon)
 	if n < 3 {
 		return false
@@ -129,17 +129,17 @@ polygon_is_convex :: proc(polygon: [][2]$T) -> bool where is_float(T) {
 }
 
 // returns true if the polygon is wound clockwise (negative signed area, y-up)
-polygon_is_clockwise :: proc(polygon: [][2]$T) -> bool where is_float(T) {
+is_clockwise :: proc(polygon: [][2]$T) -> bool where is_float(T) {
 	return _signed_area(polygon) < 0
 }
 
 // returns the area of the polygon via shoelace
-polygon_get_area :: proc(polygon: [][2]$T) -> T where is_float(T) {
+area :: proc(polygon: [][2]$T) -> T where is_float(T) {
 	return abs(_signed_area(polygon))
 }
 
 // returns the perimeter length of the polygon (including the closing edge)
-polygon_get_perimeter :: proc(polygon: [][2]$T) -> T where is_float(T) {
+perimeter :: proc(polygon: [][2]$T) -> T where is_float(T) {
 	per: T
 	n := len(polygon)
 	for i in 0 ..< n {
@@ -149,7 +149,7 @@ polygon_get_perimeter :: proc(polygon: [][2]$T) -> T where is_float(T) {
 }
 
 // returns the bounding rect of the polygon as {min, max} (rect-compatible)
-polygon_get_min_max :: proc(polygon: [][2]$T) -> [2][2]T where is_float(T) {
+min_max :: proc(polygon: [][2]$T) -> [2][2]T where is_float(T) {
 	if len(polygon) == 0 {
 		return {}
 	}
@@ -163,7 +163,7 @@ polygon_get_min_max :: proc(polygon: [][2]$T) -> [2][2]T where is_float(T) {
 }
 
 // returns a list of vertex pairs for each edge (caller owns the result)
-polygon_get_edges :: proc(
+edges :: proc(
 	polygon: [][2]$T,
 	allocator := context.allocator,
 ) -> [][2][2]T where is_float(T) {
@@ -178,7 +178,7 @@ polygon_get_edges :: proc(
 // reduces the resolution of a polygon using an angular threshold (radians);
 // drops vertices whose turn angle is at or below the threshold. Lossy: alters
 // the shape. Caller owns the result.
-polygon_decimate :: proc(
+decimate :: proc(
 	polygon: [][2]$T,
 	angle_threshold: T,
 	allocator := context.allocator,
@@ -204,7 +204,7 @@ polygon_decimate :: proc(
 
 // removes (near-)collinear points within epsilon perpendicular distance.
 // Topology-preserving: does not change the shape. Caller owns the result.
-polygon_simplify :: proc(
+simplify :: proc(
 	polygon: [][2]$T,
 	epsilon: T,
 	allocator := context.allocator,
@@ -307,7 +307,7 @@ Polygon_Join_Type :: enum {
 // uniform delta offset; arc_resolution is the chord-deviation tolerance for
 // round joins (polygon units), miter_limit <= 0 means no limit. Returns the
 // offset boundary as a set of contours. Caller owns the result.
-polygon_offset :: proc(
+offset :: proc(
 	polygon: [][2]$T,
 	delta: T,
 	join: Polygon_Join_Type,
@@ -327,7 +327,7 @@ polygon_offset :: proc(
 
 // per-edge delta offset; deltas[i] applies to the edge leaving vertex i.
 // Caller owns the result.
-polygon_offset_edges :: proc(
+offset_edges :: proc(
 	polygon: [][2]$T,
 	deltas: []T,
 	join: Polygon_Join_Type,
@@ -356,7 +356,7 @@ Triangulate_Mode :: enum {
 }
 
 // returns the triangles of the polygon. Caller owns the result.
-polygon_triangulate :: proc(
+triangulate :: proc(
 	polygon: [][2]$T,
 	mode := Triangulate_Mode.Robust,
 	allocator := context.allocator,
@@ -387,7 +387,7 @@ polygon_triangulate :: proc(
 
 // returns the union of the input polygons (all should be CCW). Caller owns the
 // result.
-polygon_union :: proc(
+union_polygon :: proc(
 	polygons: [][][2]$T,
 	allocator := context.allocator,
 ) -> [][][2]T where is_float(T) {
@@ -400,7 +400,7 @@ polygon_union :: proc(
 // returns the regions covered by at least two of the input polygons. For
 // exactly two this is their intersection; for three or more it is "covered >= 2
 // times", not the strict n-way intersection. Caller owns the result.
-polygon_intersect :: proc(
+intersect :: proc(
 	polygons: [][][2]$T,
 	allocator := context.allocator,
 ) -> [][][2]T where is_float(T) {
@@ -412,7 +412,7 @@ polygon_intersect :: proc(
 
 // subtracts the cutters (polygons[1:]) from the subject (polygons[0]). Exact
 // when the cutters do not mutually overlap. Caller owns the result.
-polygon_difference :: proc(
+difference :: proc(
 	polygons: [][][2]$T,
 	allocator := context.allocator,
 ) -> [][][2]T where is_float(T) {
@@ -424,7 +424,7 @@ polygon_difference :: proc(
 
 // returns the symmetric difference of the input polygons: regions covered an
 // odd number of times. Caller owns the result.
-polygon_xor :: proc(
+xor :: proc(
 	polygons: [][][2]$T,
 	allocator := context.allocator,
 ) -> [][][2]T where is_float(T) {
@@ -432,4 +432,13 @@ polygon_xor :: proc(
 	res := libtess2.xor_polygons(f)
 	defer libtess2.delete_contours(res)
 	return _contours_from_f64(res, T, allocator)
+}
+
+
+// returns 1 or more convex hulls from a given polygon.
+convex_hulls :: proc(
+	polygon: [][2]$T,
+	allocator := context.allocator,
+) -> [][][2]T where is_float(T) {
+
 }

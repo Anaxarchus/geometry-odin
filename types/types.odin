@@ -29,12 +29,6 @@ Rect_int :: [2]Vector2int
 Rect_i32 :: [2]Vector2i32
 Rect_i64 :: [2]Vector2i64
 
-Ray2_f32 :: distinct [2]Vector2f32 // origin, direction
-Ray2_f64 :: distinct [2]Vector2f64
-
-Ray3_f32 :: distinct [2]Vector3f32 // origin, direction
-Ray3_f64 :: distinct [2]Vector3f64
-
 Plane_f32 :: Vector4f32 // x, y, z, d
 Plane_f64 :: Vector4f64
 

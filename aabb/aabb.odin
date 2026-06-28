@@ -31,13 +31,13 @@ Aabb_Face :: enum {
 is_scalar :: intrinsics.type_is_ordered_numeric
 
 // builds an aabb from a center point and full size
-aabb_from_center_size :: proc(center, size: [3]$T) -> [2][3]T where is_scalar(T) {
+from_center_size :: proc(center, size: [3]$T) -> [2][3]T where is_scalar(T) {
 	hs := size / 2
 	return {center - hs, center + hs}
 }
 
 // returns the axis-aligned bounding box of the given points
-aabb_from_points :: proc(points: [][3]$T) -> [2][3]T where is_scalar(T) {
+from_points :: proc(points: [][3]$T) -> [2][3]T where is_scalar(T) {
 	result := [2][3]T{points[0], points[0]}
 	for v in points[1:] {
 		result[0] = linalg.min(result[0], v)
@@ -51,29 +51,29 @@ aabb_from_points :: proc(points: [][3]$T) -> [2][3]T where is_scalar(T) {
 // ---------------------------------------------------------------------------
 
 // returns the size (width, height, depth) of the aabb
-aabb_get_size :: #force_inline proc "contextless" (a: [2][3]$T) -> [3]T where is_scalar(T) {
+size :: #force_inline proc "contextless" (a: [2][3]$T) -> [3]T where is_scalar(T) {
 	return a[1] - a[0]
 }
 
 // returns the volume of the aabb
-aabb_get_volume :: #force_inline proc "contextless" (a: [2][3]$T) -> T where is_scalar(T) {
-	size := aabb_get_size(a)
+volume :: #force_inline proc "contextless" (a: [2][3]$T) -> T where is_scalar(T) {
+	size := size(a)
 	return size.x * size.y * size.z
 }
 
 // returns the total surface area of the aabb
-aabb_get_surface_area :: #force_inline proc "contextless" (a: [2][3]$T) -> T where is_scalar(T) {
-	size := aabb_get_size(a)
+surface_area :: #force_inline proc "contextless" (a: [2][3]$T) -> T where is_scalar(T) {
+	size := size(a)
 	return 2 * (size.x * size.y + size.y * size.z + size.z * size.x)
 }
 
 // returns the center point of the aabb
-aabb_get_center :: #force_inline proc "contextless" (a: [2][3]$T) -> [3]T where is_scalar(T) {
+center :: #force_inline proc "contextless" (a: [2][3]$T) -> [3]T where is_scalar(T) {
 	return (a[0] + a[1]) / 2
 }
 
 // returns the position of a single named corner
-aabb_get_corner :: #force_inline proc "contextless" (
+corner :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	corner: Aabb_Corner,
 ) -> [3]T where is_scalar(T) {
@@ -86,16 +86,16 @@ aabb_get_corner :: #force_inline proc "contextless" (
 }
 
 // returns all eight corners in Aabb_Corner order
-aabb_get_corners :: #force_inline proc "contextless" (a: [2][3]$T) -> [8][3]T where is_scalar(T) {
+corners :: #force_inline proc "contextless" (a: [2][3]$T) -> [8][3]T where is_scalar(T) {
 	corners: [8][3]T
 	for i in 0 ..< 8 {
-		corners[i] = aabb_get_corner(a, Aabb_Corner(i))
+		corners[i] = corner(a, Aabb_Corner(i))
 	}
 	return corners
 }
 
 // returns the named face as its own (degenerate) aabb in the face plane
-aabb_get_face :: #force_inline proc "contextless" (
+face :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	face: Aabb_Face,
 ) -> [2][3]T where is_scalar(T) {
@@ -121,7 +121,7 @@ aabb_get_face :: #force_inline proc "contextless" (
 // ---------------------------------------------------------------------------
 
 // returns true if an aabb contains a given point
-aabb_has_point :: #force_inline proc "contextless" (
+has_point :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	p: [3]T,
 ) -> bool where is_scalar(T) {
@@ -136,7 +136,7 @@ aabb_has_point :: #force_inline proc "contextless" (
 }
 
 // returns true if `outer` fully encloses `inner`
-aabb_contains_aabb :: #force_inline proc "contextless" (
+contains_aabb :: #force_inline proc "contextless" (
 	outer, inner: [2][3]$T,
 ) -> bool where is_scalar(T) {
 	return(
@@ -150,7 +150,7 @@ aabb_contains_aabb :: #force_inline proc "contextless" (
 }
 
 // returns true if the two aabbs overlap
-aabb_intersects :: #force_inline proc "contextless" (a, b: [2][3]$T) -> bool where is_scalar(T) {
+intersects :: #force_inline proc "contextless" (a, b: [2][3]$T) -> bool where is_scalar(T) {
 	return(
 		a[0].x <= b[1].x &&
 		a[1].x >= b[0].x &&
@@ -162,7 +162,7 @@ aabb_intersects :: #force_inline proc "contextless" (a, b: [2][3]$T) -> bool whe
 }
 
 // returns the overlapping aabb; ok is false when they don't intersect
-aabb_intersection :: #force_inline proc "contextless" (
+intersection :: #force_inline proc "contextless" (
 	a, b: [2][3]$T,
 ) -> (overlap: [2][3]T, ok: bool) where is_scalar(T) {
 	lo := linalg.max(a[0], b[0])
@@ -174,16 +174,16 @@ aabb_intersection :: #force_inline proc "contextless" (
 }
 
 // returns a new aabb enclosing two given aabbs (their union / bounding box)
-aabb_merge :: #force_inline proc "contextless" (a, b: [2][3]$T) -> [2][3]T where is_scalar(T) {
+merge :: #force_inline proc "contextless" (a, b: [2][3]$T) -> [2][3]T where is_scalar(T) {
 	return {linalg.min(a[0], b[0]), linalg.max(a[1], b[1])}
 }
 
 // returns the vertex of the aabb closest to the given point, and which corner it is
-aabb_get_nearest_vertex :: proc "contextless" (
+nearest_vertex :: proc "contextless" (
 	a: [2][3]$T,
 	p: [3]T,
 ) -> (vertex: [3]T, corner: Aabb_Corner) where is_scalar(T) {
-	corners := aabb_get_corners(a)
+	corners := corners(a)
 	best := 0
 	d := corners[0] - p
 	best_dist := d.x * d.x + d.y * d.y + d.z * d.z
@@ -199,7 +199,7 @@ aabb_get_nearest_vertex :: proc "contextless" (
 }
 
 // returns the face of the aabb closest to the given point
-aabb_get_nearest_face :: proc "contextless" (
+nearest_face :: proc "contextless" (
 	a: [2][3]$T,
 	p: [3]T,
 ) -> Aabb_Face where is_scalar(T) {
@@ -220,8 +220,8 @@ aabb_get_nearest_face :: proc "contextless" (
 }
 
 // returns the nearest point on the boundary to the given point (snaps even from inside)
-aabb_project_to_boundary :: proc "contextless" (a: [2][3]$T, p: [3]T) -> [3]T where is_scalar(T) {
-	c := aabb_clamp_point(a, p)
+project_to_boundary :: proc "contextless" (a: [2][3]$T, p: [3]T) -> [3]T where is_scalar(T) {
+	c := clamp_point(a, p)
 	dnx := abs(c.x - a[0].x)
 	dpx := abs(a[1].x - c.x)
 	dny := abs(c.y - a[0].y)
@@ -248,7 +248,7 @@ aabb_project_to_boundary :: proc "contextless" (a: [2][3]$T, p: [3]T) -> [3]T wh
 }
 
 // clamps a point into the aabb; interior points are returned unchanged
-aabb_clamp_point :: #force_inline proc "contextless" (
+clamp_point :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	p: [3]T,
 ) -> [3]T where is_scalar(T) {
@@ -264,7 +264,7 @@ aabb_clamp_point :: #force_inline proc "contextless" (
 // ---------------------------------------------------------------------------
 
 // moves the aabb by an offset without resizing
-aabb_translate :: #force_inline proc "contextless" (
+translate :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	offset: [3]T,
 ) -> [2][3]T where is_scalar(T) {
@@ -272,17 +272,17 @@ aabb_translate :: #force_inline proc "contextless" (
 }
 
 // scales the aabb about its center by a per-axis factor
-aabb_scale :: #force_inline proc "contextless" (
+scale :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	factor: [3]T,
 ) -> [2][3]T where is_scalar(T) {
-	c := aabb_get_center(a)
-	hs := aabb_get_size(a) / 2 * factor
+	c := center(a)
+	hs := size(a) / 2 * factor
 	return {c - hs, c + hs}
 }
 
 // grows an aabb outward on all sides by a given vector (each extent grows by 2*amount)
-aabb_grow :: #force_inline proc "contextless" (
+grow :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	amount: [3]T,
 ) -> [2][3]T where is_scalar(T) {
@@ -290,7 +290,7 @@ aabb_grow :: #force_inline proc "contextless" (
 }
 
 // grows an aabb to enclose a given point
-aabb_grow_to :: #force_inline proc "contextless" (
+grow_to :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	p: [3]T,
 ) -> [2][3]T where is_scalar(T) {
@@ -298,11 +298,11 @@ aabb_grow_to :: #force_inline proc "contextless" (
 }
 
 // constrains an aabb to sit fully inside `bounds` (translating, and shrinking if needed)
-aabb_clamp_aabb :: proc "contextless" (
+clamp_aabb :: proc "contextless" (
 	a: [2][3]$T,
 	bounds: [2][3]T,
 ) -> [2][3]T where is_scalar(T) {
-	size := linalg.min(aabb_get_size(a), aabb_get_size(bounds))
+	size := linalg.min(size(a), size(bounds))
 	lo := a[0]
 	lo = linalg.min(lo, bounds[1] - size)
 	lo = linalg.max(lo, bounds[0])
@@ -314,7 +314,7 @@ aabb_clamp_aabb :: proc "contextless" (
 // ---------------------------------------------------------------------------
 
 // splits an aabb into two new aabbs at the given x coordinate
-aabb_split_x :: #force_inline proc "contextless" (
+split_x :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	x: T,
 ) -> (lo, hi: [2][3]T) where is_scalar(T) {
@@ -324,7 +324,7 @@ aabb_split_x :: #force_inline proc "contextless" (
 }
 
 // splits an aabb into two new aabbs at the given y coordinate
-aabb_split_y :: #force_inline proc "contextless" (
+split_y :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	y: T,
 ) -> (lo, hi: [2][3]T) where is_scalar(T) {
@@ -334,7 +334,7 @@ aabb_split_y :: #force_inline proc "contextless" (
 }
 
 // splits an aabb into two new aabbs at the given z coordinate
-aabb_split_z :: #force_inline proc "contextless" (
+split_z :: #force_inline proc "contextless" (
 	a: [2][3]$T,
 	z: T,
 ) -> (lo, hi: [2][3]T) where is_scalar(T) {
@@ -344,11 +344,11 @@ aabb_split_z :: #force_inline proc "contextless" (
 }
 
 // subdivides an aabb into its eight octants about its center, in Aabb_Corner order
-aabb_subdivide :: proc "contextless" (a: [2][3]$T) -> [8][2][3]T where is_scalar(T) {
-	c := aabb_get_center(a)
+subdivide :: proc "contextless" (a: [2][3]$T) -> [8][2][3]T where is_scalar(T) {
+	c := center(a)
 	octants: [8][2][3]T
 	for i in 0 ..< 8 {
-		corner := aabb_get_corner(a, Aabb_Corner(i))
+		corner := corner(a, Aabb_Corner(i))
 		octants[i] = {linalg.min(corner, c), linalg.max(corner, c)}
 	}
 	return octants

@@ -11,16 +11,16 @@ is_float :: intrinsics.type_is_float
 //   phi   = polar angle from +z (0 at the north pole, PI at the south pole)
 // at phi = PI/2 (the equator) the boundary reduces to the circle in the xy-plane.
 
-sphere_volume :: proc(radius: $T) -> T where is_float(T) {
+volume :: proc(radius: $T) -> T where is_float(T) {
 	return 4.0 / 3.0 * math.PI * radius * radius * radius
 }
 
-sphere_surface_area :: proc(radius: $T) -> T where is_float(T) {
+surface_area :: proc(radius: $T) -> T where is_float(T) {
 	return 4 * math.PI * radius * radius
 }
 
 // gets the nearest point on the sphere's boundary to the given point
-sphere_project_to_boundary :: proc(point, origin: [3]$T, radius: T) -> [3]T where is_float(T) {
+project_to_boundary :: proc(point, origin: [3]$T, radius: T) -> [3]T where is_float(T) {
 	d := point - origin
 	dist := linalg.length(d)
 	if dist == 0 {
@@ -31,7 +31,7 @@ sphere_project_to_boundary :: proc(point, origin: [3]$T, radius: T) -> [3]T wher
 }
 
 // clamps a point to within the sphere (interior points are returned unchanged)
-sphere_clamp_point :: proc(point, origin: [3]$T, radius: T) -> [3]T where is_float(T) {
+clamp_point :: proc(point, origin: [3]$T, radius: T) -> [3]T where is_float(T) {
 	d := point - origin
 	dist := linalg.length(d)
 	if dist <= radius {
@@ -41,13 +41,13 @@ sphere_clamp_point :: proc(point, origin: [3]$T, radius: T) -> [3]T where is_flo
 }
 
 // returns true if the sphere contains the point
-sphere_has_point :: proc(point, origin: [3]$T, radius: T) -> bool where is_float(T) {
+has_point :: proc(point, origin: [3]$T, radius: T) -> bool where is_float(T) {
 	d := point - origin
 	return linalg.dot(d, d) <= radius * radius
 }
 
 // returns the point on the boundary at the given spherical angles
-sphere_point_at :: proc(origin: [3]$T, radius: T, theta, phi: T) -> [3]T where is_float(T) {
+point_at :: proc(origin: [3]$T, radius: T, theta, phi: T) -> [3]T where is_float(T) {
 	sp := math.sin(phi)
 	return origin + [3]T{sp * math.cos(theta), sp * math.sin(theta), math.cos(phi)} * radius
 }
@@ -55,13 +55,13 @@ sphere_point_at :: proc(origin: [3]$T, radius: T, theta, phi: T) -> [3]T where i
 // returns the outward unit normal at the given spherical angles. (A sphere's
 // tangent space at a point is a plane, so there is no single tangent direction;
 // build a frame from this normal if one is needed.)
-sphere_normal_at :: proc(theta, phi: $T) -> [3]T where is_float(T) {
+normal_at :: proc(theta, phi: $T) -> [3]T where is_float(T) {
 	sp := math.sin(phi)
 	return {sp * math.cos(theta), sp * math.sin(theta), math.cos(phi)}
 }
 
 // returns the spherical angles of a point as seen from the center
-sphere_angles_of :: proc(point, origin: [3]$T) -> (theta, phi: T) where is_float(T) {
+angles_of :: proc(point, origin: [3]$T) -> (theta, phi: T) where is_float(T) {
 	d := point - origin
 	dist := linalg.length(d)
 	if dist == 0 {

@@ -56,8 +56,8 @@ main :: proc() {
 		d := 10 + 35 * (0.5 + 0.5 * math.sin(f32(rl.GetTime())))
 
 		star := make_star([2]f32{WIDTH / 2, HEIGHT / 2}, 130, 55, 6, context.temp_allocator)
-		outward := polygon.polygon_offset(star, d, join, 2, 6, context.temp_allocator)
-		inward := polygon.polygon_offset(star, -d, join, 2, 6, context.temp_allocator)
+		outward := polygon.offset(star, d, join, 2, 6, context.temp_allocator)
+		inward := polygon.offset(star, -d, join, 2, 6, context.temp_allocator)
 
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.RAYWHITE)

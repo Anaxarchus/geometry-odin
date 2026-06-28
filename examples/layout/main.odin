@@ -1,7 +1,7 @@
 package main
 
 // A responsive dashboard built entirely from the rect partitioning API:
-// rect_grow (inset), rect_cut (header/sidebar/footer), rect_divide (card grid),
+// grow (inset), cut (header/sidebar/footer), rect_divide (card grid),
 // rect_stack (sidebar buttons). Resize the window to see it reflow.
 
 import rl "vendor:raylib"
@@ -26,15 +26,15 @@ main :: proc() {
 
 	for !rl.WindowShouldClose() {
 		root := [2][2]f32{{0, 0}, {f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}}
-		root = rect.rect_grow(root, [2]f32{-12, -12}) // inset
+		root = rect.grow(root, [2]f32{-12, -12}) // inset
 
-		header, rest := rect.rect_cut(root, .Top, 56)
-		footer, mid := rect.rect_cut(rest, .Bottom, 36)
-		sidebar, content := rect.rect_cut(mid, .Left, 210)
+		header, rest := rect.cut(root, .Top, 56)
+		footer, mid := rect.cut(rest, .Bottom, 36)
+		sidebar, content := rect.cut(mid, .Left, 210)
 
 		// shave a small gap around the inner regions
-		content = rect.rect_grow(content, [2]f32{-6, -6})
-		sidebar = rect.rect_grow(sidebar, [2]f32{-6, -6})
+		content = rect.grow(content, [2]f32{-6, -6})
+		sidebar = rect.grow(sidebar, [2]f32{-6, -6})
 
 		rl.BeginDrawing()
 		rl.ClearBackground({28, 30, 38, 255})
@@ -43,16 +43,16 @@ main :: proc() {
 		panel(footer, {52, 58, 74, 255}, rl.GRAY, "Footer / status bar")
 
 		// sidebar: a stack of fixed-height buttons
-		buttons, _, _ := rect.rect_stack_y(sidebar, 6, 44, 8, .Begin, context.temp_allocator)
+		buttons, _, _ := rect.stack_y(sidebar, 6, 44, 8, .Begin, context.temp_allocator)
 		panel(sidebar, {40, 44, 56, 255}, rl.DARKGRAY, "")
 		for btn, i in buttons {
 			panel(btn, {66, 72, 92, 255}, rl.LIGHTGRAY, fmt.ctprintf("Nav %d", i + 1))
 		}
 
 		// content: a 3 x 2 card grid
-		cols := rect.rect_divide_x(content, 3, 10, context.temp_allocator)
+		cols := rect.divide_x(content, 3, 10, context.temp_allocator)
 		for col in cols {
-			cells := rect.rect_divide_y(col, 2, 10, context.temp_allocator)
+			cells := rect.divide_y(col, 2, 10, context.temp_allocator)
 			for cell in cells {
 				panel(cell, {44, 48, 60, 255}, rl.SKYBLUE, "Card")
 			}

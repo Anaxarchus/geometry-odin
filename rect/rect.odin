@@ -27,13 +27,13 @@ Rect_Alignment :: enum {
 is_scalar :: intrinsics.type_is_ordered_numeric
 
 // builds a rect from a center point and full size
-rect_from_center_size :: proc(center, size: [2]$T) -> [2][2]T where is_scalar(T) {
+from_center_size :: proc(center, size: [2]$T) -> [2][2]T where is_scalar(T) {
 	hs := size / 2
 	return {center - hs, center + hs}
 }
 
 // returns the axis-aligned bounding box of the given points
-rect_from_points :: proc(points: [][2]$T) -> [2][2]T where is_scalar(T) {
+from_points :: proc(points: [][2]$T) -> [2][2]T where is_scalar(T) {
 	result := [2][2]T{points[0], points[0]}
 	for v in points[1:] {
 		result[0] = linalg.min(result[0], v)
@@ -43,35 +43,35 @@ rect_from_points :: proc(points: [][2]$T) -> [2][2]T where is_scalar(T) {
 }
 
 // returns the size (width, height) of the rect
-rect_get_size :: #force_inline proc "contextless" (r: [2][2]$T) -> [2]T where is_scalar(T) {
+size :: #force_inline proc "contextless" (r: [2][2]$T) -> [2]T where is_scalar(T) {
 	return r[1] - r[0]
 }
 
 // returns the area of the rect
-rect_get_area :: #force_inline proc "contextless" (r: [2][2]$T) -> T where is_scalar(T) {
-	size := rect_get_size(r)
+area :: #force_inline proc "contextless" (r: [2][2]$T) -> T where is_scalar(T) {
+	size := size(r)
 	return size.x * size.y
 }
 
 // returns the perimeter of the rect
-rect_get_perimeter :: #force_inline proc "contextless" (r: [2][2]$T) -> T where is_scalar(T) {
-	size := rect_get_size(r)
+perimeter :: #force_inline proc "contextless" (r: [2][2]$T) -> T where is_scalar(T) {
+	size := size(r)
 	return 2 * (size.x + size.y)
 }
 
 // returns the aspect ratio of the rect (width / height)
-rect_get_aspect :: #force_inline proc "contextless" (r: [2][2]$T) -> f64 where is_scalar(T) {
-	size := rect_get_size(r)
+aspect :: #force_inline proc "contextless" (r: [2][2]$T) -> f64 where is_scalar(T) {
+	size := size(r)
 	return f64(size.x) / f64(size.y)
 }
 
 // returns the center point of the rect
-rect_get_center :: #force_inline proc "contextless" (r: [2][2]$T) -> [2]T where is_scalar(T) {
+center :: #force_inline proc "contextless" (r: [2][2]$T) -> [2]T where is_scalar(T) {
 	return (r[0] + r[1]) / 2
 }
 
 // returns the position of a single named corner
-rect_get_corner :: #force_inline proc "contextless" (
+corner :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	corner: Rect_Corner,
 ) -> [2]T where is_scalar(T) {
@@ -89,12 +89,12 @@ rect_get_corner :: #force_inline proc "contextless" (
 }
 
 // returns all four corners in Rect_Corner order (Top_Left, Top_Right, Bottom_Left, Bottom_Right)
-rect_get_corners :: #force_inline proc "contextless" (r: [2][2]$T) -> [4][2]T where is_scalar(T) {
+corners :: #force_inline proc "contextless" (r: [2][2]$T) -> [4][2]T where is_scalar(T) {
 	return {r[0], [2]T{r[1].x, r[0].y}, [2]T{r[0].x, r[1].y}, r[1]}
 }
 
 // returns the two endpoints of a named edge
-rect_get_edge :: #force_inline proc "contextless" (
+edge :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	edge: Rect_Edge,
 ) -> [2][2]T where is_scalar(T) {
@@ -121,7 +121,7 @@ rect_get_edge :: #force_inline proc "contextless" (
 }
 
 // returns true if a rect contains a given point
-rect_has_point :: #force_inline proc "contextless" (
+has_point :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	p: [2]T,
 ) -> bool where is_scalar(T) {
@@ -129,7 +129,7 @@ rect_has_point :: #force_inline proc "contextless" (
 }
 
 // returns true if `outer` fully encloses `inner`
-rect_contains_rect :: #force_inline proc "contextless" (
+contains_rect :: #force_inline proc "contextless" (
 	outer, inner: [2][2]$T,
 ) -> bool where is_scalar(T) {
 	return(
@@ -141,12 +141,12 @@ rect_contains_rect :: #force_inline proc "contextless" (
 }
 
 // returns true if the two rects overlap
-rect_intersects :: #force_inline proc "contextless" (a, b: [2][2]$T) -> bool where is_scalar(T) {
+intersects :: #force_inline proc "contextless" (a, b: [2][2]$T) -> bool where is_scalar(T) {
 	return a[0].x <= b[1].x && a[1].x >= b[0].x && a[0].y <= b[1].y && a[1].y >= b[0].y
 }
 
 // returns the overlapping rect; ok is false when they don't intersect
-rect_intersection :: #force_inline proc "contextless" (
+intersection :: #force_inline proc "contextless" (
 	a, b: [2][2]$T,
 ) -> (overlap: [2][2]T, ok: bool) where is_scalar(T) {
 	lo := linalg.max(a[0], b[0])
@@ -158,16 +158,16 @@ rect_intersection :: #force_inline proc "contextless" (
 }
 
 // returns a new rect enclosing two given rects (their union / bounding box)
-rect_merge :: #force_inline proc "contextless" (a, b: [2][2]$T) -> [2][2]T where is_scalar(T) {
+merge :: #force_inline proc "contextless" (a, b: [2][2]$T) -> [2][2]T where is_scalar(T) {
 	return {linalg.min(a[0], b[0]), linalg.max(a[1], b[1])}
 }
 
 // returns the vertex of the rect closest to the given point, and which corner it is
-rect_get_nearest_vertex :: proc "contextless" (
+nearest_vertex :: proc "contextless" (
 	r: [2][2]$T,
 	p: [2]T,
 ) -> (vertex: [2]T, corner: Rect_Corner) where is_scalar(T) {
-	corners := rect_get_corners(r)
+	corners := corners(r)
 	best := 0
 	d := corners[0] - p
 	best_dist := d.x * d.x + d.y * d.y
@@ -183,7 +183,7 @@ rect_get_nearest_vertex :: proc "contextless" (
 }
 
 // returns the edge of the rect closest to the given point
-rect_get_nearest_edge :: proc "contextless" (
+nearest_edge :: proc "contextless" (
 	r: [2][2]$T,
 	p: [2]T,
 ) -> Rect_Edge where is_scalar(T) {
@@ -200,8 +200,8 @@ rect_get_nearest_edge :: proc "contextless" (
 }
 
 // returns the nearest point on the boundary to the given point (snaps even from inside)
-rect_project_to_boundary :: proc "contextless" (r: [2][2]$T, p: [2]T) -> [2]T where is_scalar(T) {
-	c := rect_clamp_point(r, p)
+project_to_boundary :: proc "contextless" (r: [2][2]$T, p: [2]T) -> [2]T where is_scalar(T) {
+	c := clamp_point(r, p)
 	dl := abs(c.x - r[0].x)
 	dr := abs(r[1].x - c.x)
 	dt := abs(c.y - r[0].y)
@@ -222,7 +222,7 @@ rect_project_to_boundary :: proc "contextless" (r: [2][2]$T, p: [2]T) -> [2]T wh
 }
 
 // clamps a point into the rect; interior points are returned unchanged
-rect_clamp_point :: #force_inline proc "contextless" (
+clamp_point :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	p: [2]T,
 ) -> [2]T where is_scalar(T) {
@@ -230,7 +230,7 @@ rect_clamp_point :: #force_inline proc "contextless" (
 }
 
 // moves the rect by an offset without resizing
-rect_translate :: #force_inline proc "contextless" (
+translate :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	offset: [2]T,
 ) -> [2][2]T where is_scalar(T) {
@@ -238,17 +238,17 @@ rect_translate :: #force_inline proc "contextless" (
 }
 
 // scales the rect about its center by a per-axis factor
-rect_scale :: #force_inline proc "contextless" (
+scale :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	factor: [2]T,
 ) -> [2][2]T where is_scalar(T) {
-	c := rect_get_center(r)
-	hs := rect_get_size(r) / 2 * factor
+	c := center(r)
+	hs := size(r) / 2 * factor
 	return {c - hs, c + hs}
 }
 
 // grows a rect outward on all sides by a given vector (width grows by 2*amount.x)
-rect_grow :: #force_inline proc "contextless" (
+grow :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	amount: [2]T,
 ) -> [2][2]T where is_scalar(T) {
@@ -256,7 +256,7 @@ rect_grow :: #force_inline proc "contextless" (
 }
 
 // grows a rect by the given amount per side
-rect_grow_sides :: #force_inline proc "contextless" (
+grow_sides :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	left: T,
 	right: T,
@@ -267,7 +267,7 @@ rect_grow_sides :: #force_inline proc "contextless" (
 }
 
 // grows a rect to enclose a given point
-rect_grow_to :: #force_inline proc "contextless" (
+grow_to :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	p: [2]T,
 ) -> [2][2]T where is_scalar(T) {
@@ -275,11 +275,11 @@ rect_grow_to :: #force_inline proc "contextless" (
 }
 
 // constrains a rect to sit fully inside `bounds` (translating, and shrinking if needed)
-rect_clamp_rect :: proc "contextless" (
+clamp_rect :: proc "contextless" (
 	r: [2][2]$T,
 	bounds: [2][2]T,
 ) -> [2][2]T where is_scalar(T) {
-	size := linalg.min(rect_get_size(r), rect_get_size(bounds))
+	size := linalg.min(size(r), size(bounds))
 	lo := r[0]
 	lo = linalg.min(lo, bounds[1] - size)
 	lo = linalg.max(lo, bounds[0])
@@ -287,7 +287,7 @@ rect_clamp_rect :: proc "contextless" (
 }
 
 // splits a rect into two new rects at the given x coordinate
-rect_split_x :: #force_inline proc "contextless" (
+split_x :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	x: T,
 ) -> (left, right: [2][2]T) where is_scalar(T) {
@@ -297,7 +297,7 @@ rect_split_x :: #force_inline proc "contextless" (
 }
 
 // splits a rect into two new rects at the given y coordinate
-rect_split_y :: #force_inline proc "contextless" (
+split_y :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	y: T,
 ) -> (top, bottom: [2][2]T) where is_scalar(T) {
@@ -307,25 +307,25 @@ rect_split_y :: #force_inline proc "contextless" (
 }
 
 // splits a rect into two at a fraction t in [0, 1] along the x axis
-rect_split_x_frac :: #force_inline proc "contextless" (
+split_x_frac :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	t: f32,
 ) -> (left, right: [2][2]T) where is_scalar(T) {
-	x := r[0].x + T(f64(rect_get_size(r).x) * f64(t))
-	return rect_split_x(r, x)
+	x := r[0].x + T(f64(size(r).x) * f64(t))
+	return split_x(r, x)
 }
 
 // splits a rect into two at a fraction t in [0, 1] along the y axis
-rect_split_y_frac :: #force_inline proc "contextless" (
+split_y_frac :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	t: f32,
 ) -> (top, bottom: [2][2]T) where is_scalar(T) {
-	y := r[0].y + T(f64(rect_get_size(r).y) * f64(t))
-	return rect_split_y(r, y)
+	y := r[0].y + T(f64(size(r).y) * f64(t))
+	return split_y(r, y)
 }
 
 // cuts a fixed amount off one edge, returning the slice and what remains.
-rect_cut :: proc "contextless" (
+cut :: proc "contextless" (
 	r: [2][2]$T,
 	edge: Rect_Edge,
 	amount: T,
@@ -352,12 +352,12 @@ rect_cut :: proc "contextless" (
 }
 
 // cuts a fraction t in [0, 1] off one edge, returning the slice and what remains
-rect_cut_frac :: #force_inline proc "contextless" (
+cut_frac :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 	edge: Rect_Edge,
 	t: f32,
 ) -> (slice, remainder: [2][2]T) where is_scalar(T) {
-	size := rect_get_size(r)
+	size := size(r)
 	amount: T
 	switch edge {
 	case .Left, .Right:
@@ -365,18 +365,18 @@ rect_cut_frac :: #force_inline proc "contextless" (
 	case .Top, .Bottom:
 		amount = T(f64(size.y) * f64(t))
 	}
-	return rect_cut(r, edge, amount)
+	return cut(r, edge, amount)
 }
 
 // divides a rect into N equal rects along the x axis, with optional gap between them
-rect_divide_x :: proc(
+divide_x :: proc(
 	r: [2][2]$T,
 	n: int,
 	gap: T,
 	allocator := context.allocator,
 ) -> [][2][2]T where is_scalar(T) {
 	result := make([][2][2]T, n, allocator)
-	size := rect_get_size(r)
+	size := size(r)
 	w := (size.x - gap * T(n - 1)) / T(n)
 	for i in 0 ..< n {
 		x0 := r[0].x + (w + gap) * T(i)
@@ -386,14 +386,14 @@ rect_divide_x :: proc(
 }
 
 // divides a rect into N equal rects along the y axis, with optional gap between them
-rect_divide_y :: proc(
+divide_y :: proc(
 	r: [2][2]$T,
 	n: int,
 	gap: T,
 	allocator := context.allocator,
 ) -> [][2][2]T where is_scalar(T) {
 	result := make([][2][2]T, n, allocator)
-	size := rect_get_size(r)
+	size := size(r)
 	h := (size.y - gap * T(n - 1)) / T(n)
 	for i in 0 ..< n {
 		y0 := r[0].y + (h + gap) * T(i)
@@ -404,7 +404,7 @@ rect_divide_y :: proc(
 
 // portions a rect into N slices of fixed width x along the x axis, returning the
 // stack and the leftover. align positions the stack within r (see remainder note below).
-rect_stack_x :: proc(
+stack_x :: proc(
 	r: [2][2]$T,
 	n: int,
 	x: T,
@@ -417,7 +417,7 @@ rect_stack_x :: proc(
 ) where is_scalar(T) {
 	stack = make([][2][2]T, n, allocator)
 	total := x * T(n) + gap * T(n - 1)
-	leftover := rect_get_size(r).x - total
+	leftover := size(r).x - total
 	pad: T
 	switch align {
 	case .Begin:
@@ -439,8 +439,14 @@ rect_stack_x :: proc(
 }
 
 // portions a rect into N slices of fixed height y along the y axis, returning the
-// stack and the leftover. align positions the stack within r (see remainder note below).
-rect_stack_y :: proc(
+// stack and the leftover. align positions the stack within r.
+// remainder semantics for stack_x/y:
+//   .Begin  -> stack sits at the min edge; remainder is the trailing leftover (contiguous)
+//   .End    -> stack sits at the max edge; remainder is the leading  leftover (contiguous)
+//   .Center -> leftover is split evenly both sides; remainder is the trailing half
+//              (the leading pad is the same width, so the caller can reconstruct it)
+// Use .Begin/.End when you intend to chain off the remainder.
+stack_y :: proc(
 	r: [2][2]$T,
 	n: int,
 	y: T,
@@ -453,7 +459,7 @@ rect_stack_y :: proc(
 ) where is_scalar(T) {
 	stack = make([][2][2]T, n, allocator)
 	total := y * T(n) + gap * T(n - 1)
-	leftover := rect_get_size(r).y - total
+	leftover := size(r).y - total
 	pad: T
 	switch align {
 	case .Begin:
@@ -474,15 +480,8 @@ rect_stack_y :: proc(
 	return
 }
 
-// remainder semantics for stack_x/y:
-//   .Begin  -> stack sits at the min edge; remainder is the trailing leftover (contiguous)
-//   .End    -> stack sits at the max edge; remainder is the leading  leftover (contiguous)
-//   .Center -> leftover is split evenly both sides; remainder is the trailing half
-//              (the leading pad is the same width, so the caller can reconstruct it)
-// Use .Begin/.End when you intend to chain off the remainder.
-
 // returns the two triangles forming the rect (each as three vertices, consistent winding)
-rect_triangulate :: #force_inline proc "contextless" (
+triangulate :: #force_inline proc "contextless" (
 	r: [2][2]$T,
 ) -> [2][3][2]T where is_scalar(T) {
 	tl := r[0]

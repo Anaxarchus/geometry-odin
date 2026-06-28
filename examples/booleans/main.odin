@@ -22,7 +22,7 @@ draw_outline :: proc(c: [][2]f32, color: rl.Color) {
 }
 
 fill_contour :: proc(c: [][2]f32, color: rl.Color) {
-	tris := polygon.polygon_triangulate(c, allocator = context.temp_allocator)
+	tris := polygon.triangulate(c, allocator = context.temp_allocator)
 	for tri in tris {
 		p0 := rl.Vector2(tri[0])
 		p1 := rl.Vector2(tri[1])
@@ -48,20 +48,20 @@ main :: proc() {
 
 		mouse := rl.GetMousePosition()
 
-		a := circle.circle_to_contour([2]f32{WIDTH / 2 - 70, HEIGHT / 2}, 150, 64, context.temp_allocator)
-		b := circle.circle_to_contour([2]f32{mouse.x, mouse.y}, 120, 64, context.temp_allocator)
+		a := circle.to_contour([2]f32{WIDTH / 2 - 70, HEIGHT / 2}, 150, 64, context.temp_allocator)
+		b := circle.to_contour([2]f32{mouse.x, mouse.y}, 120, 64, context.temp_allocator)
 		set := [][][2]f32{a, b}
 
 		result: [][][2]f32
 		switch op {
 		case 0:
-			result = polygon.polygon_union(set, context.temp_allocator)
+			result = polygon.union_polygon(set, context.temp_allocator)
 		case 1:
-			result = polygon.polygon_intersect(set, context.temp_allocator)
+			result = polygon.intersect(set, context.temp_allocator)
 		case 2:
-			result = polygon.polygon_difference(set, context.temp_allocator)
+			result = polygon.difference(set, context.temp_allocator)
 		case 3:
-			result = polygon.polygon_xor(set, context.temp_allocator)
+			result = polygon.xor(set, context.temp_allocator)
 		}
 
 		rl.BeginDrawing()
