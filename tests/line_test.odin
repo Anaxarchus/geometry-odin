@@ -182,13 +182,13 @@ test_line_distance_infinite :: proc(t: ^testing.T) {
 @(test)
 test_line_bounds :: proc(t: ^testing.T) {
 	li := [2][2]int{{4, 6}, {1, 2}}
-	b := line.bounds(li)
+	b := line.min_max(li)
 	testing.expect(t, b[0] == [2]int{1, 2}, "bounds min")
 	testing.expect(t, b[1] == [2]int{4, 6}, "bounds max")
 
 	// mixed signs and 3D
 	l3 := [2][3]f32{{3, -1, 0}, {-2, 5, -4}}
-	b3 := line.bounds(l3)
+	b3 := line.min_max(l3)
 	testing.expect(t, veq(b3[0], [3]f32{-2, -1, -4}), "bounds 3d min")
 	testing.expect(t, veq(b3[1], [3]f32{3, 5, 0}), "bounds 3d max")
 }
