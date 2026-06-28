@@ -13,9 +13,7 @@ import "../types"
 // point. dir need not be normalized, in which case t is in units of |dir|.
 
 @(private)
-is_scalar :: #force_inline proc "contextless" ($T: typeid) -> bool {
-	return intrinsics.type_is_float(T) || intrinsics.type_is_integer(T)
-}
+is_scalar :: intrinsics.type_is_ordered_numeric
 
 @(private)
 is_float :: intrinsics.type_is_float

@@ -24,9 +24,7 @@ Rect_Alignment :: enum {
 }
 
 @(private)
-is_scalar :: #force_inline proc "contextless" ($T: typeid) -> bool {
-	return intrinsics.type_is_float(T) || intrinsics.type_is_integer(T)
-}
+is_scalar :: intrinsics.type_is_ordered_numeric
 
 // builds a rect from a center point and full size
 rect_from_center_size :: proc(center, size: [2]$T) -> [2][2]T where is_scalar(T) {
@@ -87,6 +85,7 @@ rect_get_corner :: #force_inline proc "contextless" (
 	case .Bottom_Right:
 		return r[1]
 	}
+	return {}
 }
 
 // returns all four corners in Rect_Corner order (Top_Left, Top_Right, Bottom_Left, Bottom_Right)
@@ -118,6 +117,7 @@ rect_get_edge :: #force_inline proc "contextless" (
 		return {r[1], {r[0].x, r[1].y}}
 
 	}
+	return {}
 }
 
 // returns true if a rect contains a given point

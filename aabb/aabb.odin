@@ -28,9 +28,7 @@ Aabb_Face :: enum {
 }
 
 @(private)
-is_scalar :: #force_inline proc "contextless" ($T: typeid) -> bool {
-	return intrinsics.type_is_float(T) || intrinsics.type_is_integer(T)
-}
+is_scalar :: intrinsics.type_is_ordered_numeric
 
 // builds an aabb from a center point and full size
 aabb_from_center_size :: proc(center, size: [3]$T) -> [2][3]T where is_scalar(T) {
@@ -115,6 +113,7 @@ aabb_get_face :: #force_inline proc "contextless" (
 	case .Pos_Z:
 		return {{a[0].x, a[0].y, a[1].z}, a[1]}
 	}
+	return {}
 }
 
 // ---------------------------------------------------------------------------

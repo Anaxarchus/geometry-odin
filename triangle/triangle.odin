@@ -11,9 +11,7 @@ is_float :: intrinsics.type_is_float
 @(private)
 is_int :: intrinsics.type_is_integer
 @(private)
-is_scalar :: #force_inline proc "contextless" ($T: typeid) -> bool {
-    return intrinsics.type_is_float(T) || intrinsics.type_is_integer(T)
-}
+is_scalar :: intrinsics.type_is_ordered_numeric
 
 triangle_cast :: proc(
 	t: [3][$N]$T,

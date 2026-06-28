@@ -53,8 +53,14 @@ Quad3_f64 :: [4]Vector3f64
 Sphere_f32 :: distinct Vector4f32 // {x, y, z, radius}
 Sphere_f64 :: distinct Vector4f64
 
-Circle2_f32 :: distinct Vector3f32 // {x, y, radius}
-Circle2_f64 :: distinct Vector3f64
+Circle2_f32 :: struct {
+    origin: Vector2f32,
+    radius: f32,
+}
+Circle2_f64 :: struct {
+    origin: Vector2f64,
+    radius: f64,
+}
 
 Circle3_f32 :: struct {
     origin: Vector3f32,
@@ -66,6 +72,20 @@ Circle3_f64 :: struct {
     origin: Vector3f64,
     normal: Vector3f64,
     radius: f64,
+}
+
+Arc2_f32 :: struct {
+    origin: Vector2f32,
+    radius: f32,
+    angle_start: f32,
+    angle_end: f32,
+}
+
+Arc2_f64 :: struct {
+    origin: Vector2f64,
+    radius: f64,
+    angle_start: f64,
+    angle_end: f64,
 }
 
 Box_f32 :: struct {
