@@ -425,11 +425,28 @@ _triangle_tangent :: proc(p0, p1, p2: [3]f64, uv0, uv1, uv2: [2]f64, n: [3]f64) 
 
 // --- Compilation Pipeline Pass: Bake --------------------------------------
 
-bake :: proc(mesh: Mesh, allocator := context.allocator) -> Indexed_Mesh {
-	out_vertices := make([dynamic][4]f64, 0, 128, context.temp_allocator)
-	out_normals  := make([dynamic][4]f64, 0, 128, context.temp_allocator)
-	out_uvs      := make([dynamic][2]f64, 0, 128, context.temp_allocator)
-	out_tangents := make([dynamic][4]f64, 0, 128, context.temp_allocator)
+// bake_geometry triangulates the half-edge mesh into GPU-ready, de-interleaved
+// attribute buffers. `verts`, `normals`, `uvs` and `tangents` run parallel (one
+// entry per emitted vertex) and `indices` is the triangle index buffer. This is
+// the layout separate-attribute APIs (e.g. Babylon's VertexData) consume
+// directly, so render backends should call this rather than interleaving and
+// unpacking again.
+//
+// Per-corner UV seams and flat-shaded faces are preserved: a (vertex, face)
+// dedup map splits a shared vertex whenever its UV or face normal differs, so
+// each face keeps its own flat normal and its corner UVs. All five slices are
+// allocated with `allocator`; the caller owns them.
+bake_geometry :: proc(mesh: Mesh, allocator := context.allocator) -> (
+	verts:    [][3]f32,
+	normals:  [][3]f32,
+	uvs:      [][2]f32,
+	tangents: [][4]f32,
+	indices:  []u32,
+) {
+	out_verts    := make([dynamic][3]f32, 0, 128, context.temp_allocator)
+	out_normals  := make([dynamic][3]f32, 0, 128, context.temp_allocator)
+	out_uvs      := make([dynamic][2]f32, 0, 128, context.temp_allocator)
+	out_tangents := make([dynamic][4]f32, 0, 128, context.temp_allocator)
 	out_indices  := make([dynamic]u32, 0, 256, context.temp_allocator)
 
 	// Keep track of which vertex data has already been emitted per face to handle
@@ -478,14 +495,14 @@ bake :: proc(mesh: Mesh, allocator := context.allocator) -> Indexed_Mesh {
 				if baked_idx, exists := v_map[pair]; exists {
 					append(&out_indices, baked_idx)
 				} else {
-					new_idx := u32(len(out_vertices))
+					new_idx := u32(len(out_verts))
 					pos := mesh.vertices[v_idx].position
 					uv  := mesh.edges[e_idx].uv
 
-					append(&out_vertices, [4]f64{pos.x, pos.y, pos.z, 1.0})
-					append(&out_normals,  [4]f64{n.x, n.y, n.z, 0.0})
-					append(&out_uvs,      uv)
-					append(&out_tangents, tangent)
+					append(&out_verts,    [3]f32{f32(pos.x), f32(pos.y), f32(pos.z)})
+					append(&out_normals,  [3]f32{f32(n.x), f32(n.y), f32(n.z)})
+					append(&out_uvs,      [2]f32{f32(uv.x), f32(uv.y)})
+					append(&out_tangents, [4]f32{f32(tangent.x), f32(tangent.y), f32(tangent.z), f32(tangent.w)})
 					append(&out_indices,  new_idx)
 
 					v_map[pair] = new_idx
@@ -494,17 +511,36 @@ bake :: proc(mesh: Mesh, allocator := context.allocator) -> Indexed_Mesh {
 		}
 	}
 
-	baked_mesh: Indexed_Mesh
-	baked_mesh.vertices = make([]types.Mesh_Vertex_f32, len(out_vertices), allocator)
-	baked_mesh.indices  = make([]u32, len(out_indices), allocator)
+	verts    = make([][3]f32, len(out_verts),    allocator)
+	normals  = make([][3]f32, len(out_normals),  allocator)
+	uvs      = make([][2]f32, len(out_uvs),      allocator)
+	tangents = make([][4]f32, len(out_tangents), allocator)
+	indices  = make([]u32,    len(out_indices),  allocator)
+	copy(verts,    out_verts[:])
+	copy(normals,  out_normals[:])
+	copy(uvs,      out_uvs[:])
+	copy(tangents, out_tangents[:])
+	copy(indices,  out_indices[:])
+	return
+}
 
-	for i in 0 ..< len(out_vertices) {
-		baked_mesh.vertices[i].position = [3]f32{f32(out_vertices[i].x), f32(out_vertices[i].y), f32(out_vertices[i].z)}
-		baked_mesh.vertices[i].normal   = [3]f32{f32(out_normals[i].x),  f32(out_normals[i].y),  f32(out_normals[i].z)}
-		baked_mesh.vertices[i].uv       = [2]f32{f32(out_uvs[i].x), f32(out_uvs[i].y)}
-		baked_mesh.vertices[i].tangent  = [4]f32{f32(out_tangents[i].x), f32(out_tangents[i].y), f32(out_tangents[i].z), f32(out_tangents[i].w)}
+// bake interleaves bake_geometry's output into an Indexed_Mesh of
+// Mesh_Vertex_f32. Prefer bake_geometry for separate-attribute render backends;
+// this wrapper exists for consumers that want the packed vertex layout.
+bake :: proc(mesh: Mesh, allocator := context.allocator) -> Indexed_Mesh {
+	verts, normals, uvs, tangents, indices := bake_geometry(mesh, context.temp_allocator)
+
+	baked_mesh: Indexed_Mesh
+	baked_mesh.vertices = make([]types.Mesh_Vertex_f32, len(verts), allocator)
+	baked_mesh.indices  = make([]u32, len(indices), allocator)
+
+	for i in 0 ..< len(verts) {
+		baked_mesh.vertices[i].position = verts[i]
+		baked_mesh.vertices[i].normal   = normals[i]
+		baked_mesh.vertices[i].uv       = uvs[i]
+		baked_mesh.vertices[i].tangent  = tangents[i]
 	}
-	copy(baked_mesh.indices, out_indices[:])
+	copy(baked_mesh.indices, indices)
 
 	return baked_mesh
 }
