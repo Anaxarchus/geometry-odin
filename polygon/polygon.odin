@@ -49,6 +49,20 @@ _point_line_distance :: proc(p, a, b: [2]$T) -> T where is_float(T) {
 	return abs(cross) / l
 }
 
+// Newell's method
+normal :: proc(profile: [][3]$T) -> [3]T where is_float(T) {
+	n := len(profile)
+	normal: [3]T
+	for i in 0 ..< n {
+		curr := profile[i]
+		next := profile[(i + 1) % n]
+		normal.x += (curr.y - next.y) * (curr.z + next.z)
+		normal.y += (curr.z - next.z) * (curr.x + next.x)
+		normal.z += (curr.x - next.x) * (curr.y + next.y)
+	}
+	return linalg.normalize0(normal)
+}
+
 // returns true if a point is inside the polygon
 Interior_Rule :: enum {
 	Even_Odd,

@@ -1,8 +1,15 @@
 package mesh
 
+// mesh.odin holds the data model and the "produce / compile" half of the
+// package: type definitions, the primitive constructors, normal/UV computation
+// and bake(). All traversal queries and topology-editing operations live in
+// edit.odin. The two files share one package, so private (`@(private)`,
+// package-scoped) helpers are visible across both.
+
 import "core:math/linalg"
 
 import "../plane"
+import "../polygon"
 import "../types"
 
 // {x, y, z, d}
@@ -36,11 +43,12 @@ Face :: struct {
 }
 
 Half_Edge :: struct {
-	vertex: int, // Vertex it points TO
-	face:   int, // Parent face
-	twin:   int, // Opposing half-edge (-1 if open boundary)
-	next:   int, // CCW next
-	prev:   int, // CCW prev
+	vertex: int,    // Vertex it points TO
+	face:   int,    // Parent face
+	twin:   int,    // Opposing half-edge (-1 if open boundary)
+	next:   int,    // CCW next
+	prev:   int,    // CCW prev
+	uv:     [2]f64, // Texture coordinate at this corner (vertex `vertex` within `face`)
 }
 
 // The mesh uses #soa[dynamic]/[dynamic] storage so editing operations can grow
@@ -73,121 +81,13 @@ destroy_indexed_mesh :: proc(mesh: ^Indexed_Mesh, allocator := context.allocator
 	mesh^ = {}
 }
 
-// --- Low-level builders ---------------------------------------------------
-//
-// These are the only places that grow the topology arrays. Because the arrays
-// are dynamic they remember the allocator they were created with, so the edit
-// operations don't need to thread an allocator through.
-
-@(private)
-_add_vertex :: proc(mesh: ^Mesh, position: [3]f64) -> int {
-	append_soa(&mesh.vertices, Mesh_Vertex{position = position})
-	return len(mesh.vertices) - 1
-}
-
-@(private)
-_add_edge :: proc(mesh: ^Mesh, vertex, face: int) -> int {
-	append(&mesh.edges, Half_Edge{vertex = vertex, face = face, twin = -1, next = -1, prev = -1})
-	return len(mesh.edges) - 1
-}
-
-// Appends a fresh face together with a dedicated 1:1 surface. The surface plane
-// is left zeroed and is filled in by refresh(). Returns the new face index.
-@(private)
-_add_face :: proc(mesh: ^Mesh, half_edge: int) -> int {
-	fi := len(mesh.faces)
-	si := len(mesh.surfaces)
-	append(&mesh.surfaces, Surface{first_face = fi, face_count = 1})
-	append(&mesh.faces, Face{surface = si, half_edge = half_edge})
-	return fi
-}
-
-// Links two half-edges together as a -> b in their shared face loop.
-@(private)
-_link :: #force_inline proc(mesh: ^Mesh, a, b: int) {
-	mesh.edges[a].next = b
-	mesh.edges[b].prev = a
-}
-
-// --- Topology Queries -----------------------------------------------------
-
-// face_loop_edges returns the half-edge indices that bound a face, in CCW loop
-// order starting at face.half_edge. The caller owns the result.
-face_loop_edges :: proc(mesh: ^Mesh, face_idx: int, allocator := context.allocator) -> [dynamic]int {
-	out := make([dynamic]int, 0, 8, allocator)
-	start := mesh.faces[face_idx].half_edge
-	e := start
-	for {
-		append(&out, e)
-		e = mesh.edges[e].next
-		if e == start do break
-	}
-	return out
-}
-
-// face_vertices returns the vertex indices around a face, in CCW loop order.
-// Vertex k is the one half-edge k of the loop points TO. The caller owns it.
-face_vertices :: proc(mesh: ^Mesh, face_idx: int, allocator := context.allocator) -> [dynamic]int {
-	out := make([dynamic]int, 0, 8, allocator)
-	start := mesh.faces[face_idx].half_edge
-	e := start
-	for {
-		append(&out, mesh.edges[e].vertex)
-		e = mesh.edges[e].next
-		if e == start do break
-	}
-	return out
-}
-
-face_centroid :: proc(mesh: ^Mesh, face_idx: int) -> [3]f64 {
-	verts := face_vertices(mesh, face_idx, context.temp_allocator)
-	c: [3]f64
-	for v in verts do c += mesh.vertices[v].position
-	if len(verts) > 0 do c /= f64(len(verts))
-	return c
-}
-
-// _face_plane fits a plane to a face loop using Newell's method, which is robust
-// for non-triangular and slightly non-planar loops.
-@(private)
-_face_plane :: proc(mesh: ^Mesh, face_idx: int) -> Plane {
-	verts := face_vertices(mesh, face_idx, context.temp_allocator)
-	cnt := len(verts)
-	if cnt < 3 do return {0, 1, 0, 0}
-
-	n: [3]f64
-	c: [3]f64
-	for k in 0 ..< cnt {
-		cur := mesh.vertices[verts[k]].position
-		nxt := mesh.vertices[verts[(k + 1) % cnt]].position
-		n.x += (cur.y - nxt.y) * (cur.z + nxt.z)
-		n.y += (cur.z - nxt.z) * (cur.x + nxt.x)
-		n.z += (cur.x - nxt.x) * (cur.y + nxt.y)
-		c += cur
-	}
-	if linalg.length(n) > 1e-12 do n = linalg.normalize(n)
-	c /= f64(cnt)
-	d := linalg.dot(n, c)
-	return {n.x, n.y, n.z, d}
-}
-
-face_normal :: proc(mesh: ^Mesh, face_idx: int) -> [3]f64 {
-	return _face_plane(mesh, face_idx).xyz
-}
-
-// edge_endpoints returns the (from, to) vertex indices of a half-edge.
-edge_endpoints :: proc(mesh: ^Mesh, edge_idx: int) -> (v0, v1: int) {
-	v1 = mesh.edges[edge_idx].vertex
-	v0 = mesh.edges[mesh.edges[edge_idx].prev].vertex
-	return
-}
-
-// --- Twin resolution & refresh -------------------------------------------
+// --- Twin resolution ------------------------------------------------------
 
 // rebuild_twins recomputes every half-edge twin from scratch by matching each
 // directed edge (start -> end) with one running the opposite direction. It is
 // O(n) via a hash map and requires only that .prev and .vertex are correct, so
-// edit operations can build clean loops and let this resolve adjacency.
+// constructors and edit operations can build clean loops and let this resolve
+// adjacency.
 rebuild_twins :: proc(mesh: ^Mesh) {
 	dir := make(map[[2]int]int, len(mesh.edges))
 	defer delete(dir)
@@ -208,19 +108,50 @@ rebuild_twins :: proc(mesh: ^Mesh) {
 	}
 }
 
-// refresh recomputes derived data (surface planes + vertex normals) after a
-// geometry or topology change. Cheap enough to call after every edit.
-refresh :: proc(mesh: ^Mesh) {
-	for si in 0 ..< len(mesh.surfaces) {
-		f := mesh.surfaces[si].first_face
-		if f >= 0 && f < len(mesh.faces) {
-			mesh.surfaces[si].plane = _face_plane(mesh, f)
-		}
+// _add_face_loop appends a face (with its dedicated 1:1 surface) built from a
+// CCW vertex loop, wiring a closed next/prev half-edge ring. Twins are left
+// unresolved; the caller runs rebuild_twins() once all loops are added. If
+// `uvs` is non-nil it must run parallel to `loop` and supplies the per-corner
+// texture coordinate for each half-edge. Returns the new face index.
+@(private)
+_add_face_loop :: proc(mesh: ^Mesh, loop: []int, uvs: [][2]f64 = nil) -> int {
+	fi   := len(mesh.faces)
+	si   := len(mesh.surfaces)
+	base := len(mesh.edges)
+	m    := len(loop)
+	append(&mesh.surfaces, Surface{first_face = fi, face_count = 1})
+	append(&mesh.faces, Face{surface = si, half_edge = base})
+	for i in 0 ..< m {
+		uv: [2]f64
+		if uvs != nil do uv = uvs[i]
+		append(&mesh.edges, Half_Edge{
+			vertex = loop[i],
+			face   = fi,
+			twin   = -1,
+			next   = base + (i + 1) % m,
+			prev   = base + (i + m - 1) % m,
+			uv     = uv,
+		})
 	}
-	calculate_normals(mesh)
+	return fi
 }
 
-// --- Primitive Factories: From Box ---
+// --- Primitive Factories: From Box ----------------------------------------
+
+// Box_Face names the six quad faces from_box emits, in build order. The enum
+// values equal the face indices, so a box face can be edited by name:
+//   mesh.extrude_face(&m, mesh.box_face(.Top), {0, 1, 0})
+Box_Face :: enum int {
+	Front  = 0, // +Z
+	Right  = 1, // +X
+	Back   = 2, // -Z
+	Left   = 3, // -X
+	Top    = 4, // +Y
+	Bottom = 5, // -Y
+}
+
+// box_face returns the face index for a named box face produced by from_box.
+box_face :: proc(f: Box_Face) -> int { return int(f) }
 
 from_box :: proc(size: [3]f64, allocator := context.allocator) -> Mesh {
 	mesh: Mesh
@@ -237,7 +168,8 @@ from_box :: proc(size: [3]f64, allocator := context.allocator) -> Mesh {
 		append_soa(&mesh.vertices, Mesh_Vertex{position = p})
 	}
 
-	// 2. Define the 6 quad faces via vertex index loops (CCW looking from outside)
+	// 2. Define the 6 quad faces via vertex index loops (CCW looking from
+	//    outside). Order matches Box_Face.
 	face_vertex_indices := [6][4]int{
 		{0, 1, 2, 3}, // Front (+Z)
 		{1, 5, 6, 2}, // Right (+X)
@@ -294,300 +226,113 @@ from_box :: proc(size: [3]f64, allocator := context.allocator) -> Mesh {
 	return mesh
 }
 
-// --- Triangulation / Queries ----------------------------------------------
-//
-// The mesh package exposes geometry; it does not implement picking or selection.
-// Ray-vs-element intersection, nearest-element-to-ray hover policy, screen-space
-// thresholds and tie-breaking are caller concerns. get_triangles is the bridge:
-// it hands callers a triangle soup they can intersect however they like.
+// --- Primitive Factories: From Polygon ------------------------------------
 
-// A single triangle emitted by get_triangles, tagged with the index of the face
-// it was fan-triangulated from so a hit can be mapped back to topology.
-Mesh_Triangle :: struct {
-	v0, v1, v2: [3]f64,
-	face:       int,
-}
+// from_polygon3 emits faces in the order [wall_0 .. wall_{n-1}, top, bottom],
+// where n == len(polygon3). These helpers map that layout onto face indices so
+// a prism can be edited by feature, e.g. mesh.extrude_face(&m, mesh.prism_top(n), v).
+// `n` is the contour vertex count (len of the polygon passed to from_polygon3).
+prism_wall   :: proc(edge_index: int) -> int { return edge_index }
+prism_top    :: proc(n: int) -> int { return n }
+prism_bottom :: proc(n: int) -> int { return n + 1 }
 
-// get_triangles fan-triangulates every face into a flat triangle list, tagging
-// each triangle with its source face index. It is the query-friendly counterpart
-// to bake(): it preserves the face->topology mapping that bake() discards and
-// returns world-space f64 positions, so callers can run exact intersection tests
-// at full precision, or downcast to f32 and feed the triangles into algo/bvh for
-// accelerated picking on larger meshes. The caller owns the returned slice.
+// from_polygon3 extrudes a closed 3D polygon contour into a prism Mesh. The
+// contour is wound CCW (y-up convention) and `length` is the extrusion distance
+// along the contour's normal (as computed by polygon.normal). The result is a
+// closed half-edge mesh.
 //
-// Triangulation is a simple fan from each face's first vertex, so results are
-// exact only for convex faces; hits on non-convex n-gons may be approximate.
-get_triangles :: proc(mesh: ^Mesh, allocator := context.allocator) -> []Mesh_Triangle {
-	tris := make([dynamic]Mesh_Triangle, 0, len(mesh.faces) * 2, allocator)
-	for fi in 0 ..< len(mesh.faces) {
-		verts := face_vertices(mesh, fi, context.temp_allocator)
-		if len(verts) < 3 do continue
-		p0 := mesh.vertices[verts[0]].position
-		for i in 1 ..< len(verts) - 1 {
-			append(&tris, Mesh_Triangle{
-				v0   = p0,
-				v1   = mesh.vertices[verts[i]].position,
-				v2   = mesh.vertices[verts[i + 1]].position,
-				face = fi,
-			})
+// Face layout: [wall_0 .. wall_{n-1}, top, bottom] (see prism_wall/top/bottom).
+// Wall i bridges contour edge V[i] -> V[i+1]. The top cap is the contour offset
+// by `length` along the normal; the bottom cap is the original contour. Bottom
+// vertices occupy indices 0..n-1, top vertices n..2n-1.
+//
+// UVs are unwrapped analytically (the prism is developable, so this is exact):
+// caps use an orthographic projection onto the contour plane, and the side
+// walls unroll into one continuous strip where U is arc length around the
+// contour and V is the extrusion height. UVs are stored per corner (per
+// half-edge) so the cap/wall seam textures cleanly; bake() carries them through.
+from_polygon3 :: proc(polygon3: [][3]f64, length: f64, allocator := context.allocator) -> Mesh {
+	mesh: Mesh
+	n := len(polygon3)
+	if n < 3 do return mesh
+
+	pn     := polygon.normal(polygon3)
+	offset := pn * length
+
+	// Vertices: 0..n-1 = bottom (original contour), n..2n-1 = top (offset).
+	mesh.vertices = make(#soa[dynamic]Mesh_Vertex, 0, n * 2, allocator)
+	for p in polygon3 do append_soa(&mesh.vertices, Mesh_Vertex{position = p})
+	for p in polygon3 do append_soa(&mesh.vertices, Mesh_Vertex{position = p + offset})
+
+	// Faces emitted as [walls.., top, bottom]. Edges: 4*n (walls) + 2*n (caps).
+	face_cap := n + 2
+	mesh.surfaces = make([dynamic]Surface,   0, face_cap, allocator)
+	mesh.faces    = make([dynamic]Face,      0, face_cap, allocator)
+	mesh.edges    = make([dynamic]Half_Edge, 0, n * 6,    allocator)
+
+	// Orthonormal frame in the contour plane for the planar cap projection. The
+	// `up` reference is swung off-axis when pn is near +/-Z to keep the cross
+	// product well-conditioned.
+	up: [3]f64 = {0, 0, 1}
+	if abs(pn.z) >= 0.999 do up = {0, 1, 0}
+	tan    := linalg.normalize(linalg.cross(up, pn))
+	bit    := linalg.cross(pn, tan)
+	origin := polygon3[0]
+
+	cap_uv :: proc(p, origin, tan, bit: [3]f64) -> [2]f64 {
+		rel := p - origin
+		return {linalg.dot(rel, tan), linalg.dot(rel, bit)}
+	}
+
+	// Side walls first (faces 0..n-1): face k bridges edge V[k] -> V[k+1], wound
+	// CCW seen from outside (bottom[k] -> bottom[k+1] -> top[k+1] -> top[k]). U is
+	// the cumulative arc length around the contour, V the extrusion height.
+	height := linalg.length(offset)
+	u: f64 = 0
+	for k in 0 ..< n {
+		kn     := (k + 1) % n
+		seg    := linalg.length(polygon3[kn] - polygon3[k])
+		u_next := u + seg
+		quad := [4]int{k, kn, n + kn, n + k}
+		quad_uv := [4][2]f64{
+			{u,      0},
+			{u_next, 0},
+			{u_next, height},
+			{u,      height},
 		}
+		_add_face_loop(&mesh, quad[:], quad_uv[:])
+		u = u_next
 	}
-	return tris[:]
-}
 
-// --- Translation Operations ----------------------------------------------
-
-translate_vertex :: proc(mesh: ^Mesh, vertex_index: int, translation: [3]f64) {
-	mesh.vertices[vertex_index].position += translation
-	refresh(mesh)
-}
-
-translate_edge :: proc(mesh: ^Mesh, edge_index: int, translation: [3]f64) {
-	v0, v1 := edge_endpoints(mesh, edge_index)
-	mesh.vertices[v0].position += translation
-	mesh.vertices[v1].position += translation
-	refresh(mesh)
-}
-
-translate_face :: proc(mesh: ^Mesh, face_index: int, translation: [3]f64) {
-	verts := face_vertices(mesh, face_index, context.temp_allocator)
-	for v in verts do mesh.vertices[v].position += translation
-	refresh(mesh)
-}
-
-// --- Subdivision ----------------------------------------------------------
-
-// _split_edge inserts a midpoint vertex on the undirected edge represented by
-// `he` and (if present) its twin, splitting each half-edge into two collinear
-// segments. It performs the raw surgery only; callers rebuild twins/refresh.
-//
-// Returns the new midpoint vertex and the half-edge of the *second* segment on
-// he's side (the one pointing to he's original target vertex).
-@(private)
-_split_edge :: proc(mesh: ^Mesh, he: int) -> (mid: int, second: int) {
-	v_to := mesh.edges[he].vertex             // P1 (he: P0 -> P1)
-	v_from, _ := edge_endpoints(mesh, he)     // P0
-	p_mid := (mesh.vertices[v_from].position + mesh.vertices[v_to].position) * 0.5
-	mid = _add_vertex(mesh, p_mid)
-
-	tw := mesh.edges[he].twin
-
-	// he side: he becomes P0 -> M, new edge he2 becomes M -> P1
-	he_next := mesh.edges[he].next
-	he2 := _add_edge(mesh, v_to, mesh.edges[he].face)
-	mesh.edges[he].vertex = mid
-	_link(mesh, he, he2)
-	_link(mesh, he2, he_next)
-	second = he2
-
-	// twin side: tw (P1 -> P0) becomes P1 -> M, new edge tw2 becomes M -> P0
-	if tw >= 0 {
-		v_tw_to := mesh.edges[tw].vertex      // P0
-		tw_next := mesh.edges[tw].next
-		tw2 := _add_edge(mesh, v_tw_to, mesh.edges[tw].face)
-		mesh.edges[tw].vertex = mid
-		_link(mesh, tw, tw2)
-		_link(mesh, tw2, tw_next)
-	}
-	return
-}
-
-// subdivide_edge splits an edge at its midpoint, inserting the new vertex into
-// both adjacent face loops. Returns the new midpoint vertex index.
-subdivide_edge :: proc(mesh: ^Mesh, edge_index: int) -> int {
-	mid, _ := _split_edge(mesh, edge_index)
-	rebuild_twins(mesh)
-	refresh(mesh)
-	return mid
-}
-
-// subdivide_face performs one step of quad subdivision (Catmull-Clark topology):
-// every boundary edge gains a shared midpoint (keeping neighbours crack-free)
-// and an n-gon becomes n quads meeting at a new centroid vertex.
-subdivide_face :: proc(mesh: ^Mesh, face_index: int) {
-	H := face_loop_edges(mesh, face_index, context.temp_allocator)
-	n := len(H)
-	if n < 3 do return
-
-	// Vertex k is what loop half-edge H[k] points to; H[k] runs V[k-1] -> V[k].
-	V := make([]int, n, context.temp_allocator)
-	for k in 0 ..< n do V[k] = mesh.edges[H[k]].vertex
-
-	centroid := face_centroid(mesh, face_index)
-	C := _add_vertex(mesh, centroid)
-
-	// Split every boundary edge. M[k] is the midpoint on edge H[k] and S[k] is
-	// its second segment (M[k] -> V[k]). H[k] now runs V[k-1] -> M[k].
-	M := make([]int, n, context.temp_allocator)
-	S := make([]int, n, context.temp_allocator)
+	// Top cap (face n): outward normal +pn, contour order over the offset verts.
+	top    := make([]int,    n, context.temp_allocator)
+	top_uv := make([][2]f64, n, context.temp_allocator)
 	for k in 0 ..< n {
-		M[k], S[k] = _split_edge(mesh, H[k])
+		top[k]    = n + k
+		top_uv[k] = cap_uv(polygon3[k] + offset, origin, tan, bit)
 	}
+	_add_face_loop(&mesh, top, top_uv)
 
-	// One quad per original corner V[k]: M[k] -> V[k] -> M[k+1] -> C.
+	// Bottom cap (face n+1): outward normal -pn, so the contour is wound reversed.
+	bot    := make([]int,    n, context.temp_allocator)
+	bot_uv := make([][2]f64, n, context.temp_allocator)
 	for k in 0 ..< n {
-		kn := (k + 1) % n
-		a := S[k]          // M[k]   -> V[k]
-		b := H[kn]         // V[k]   -> M[k+1]
-		c := _add_edge(mesh, C, 0)    // M[k+1] -> C
-		d := _add_edge(mesh, M[k], 0) // C      -> M[k]
-
-		fi := face_index if k == 0 else _add_face(mesh, a)
-		mesh.edges[a].face = fi
-		mesh.edges[b].face = fi
-		mesh.edges[c].face = fi
-		mesh.edges[d].face = fi
-		mesh.faces[fi].half_edge = a
-
-		_link(mesh, a, b)
-		_link(mesh, b, c)
-		_link(mesh, c, d)
-		_link(mesh, d, a)
+		bot[k]    = n - 1 - k
+		bot_uv[k] = cap_uv(polygon3[n - 1 - k], origin, tan, bit)
 	}
+	_add_face_loop(&mesh, bot, bot_uv)
 
-	rebuild_twins(mesh)
-	refresh(mesh)
+	rebuild_twins(&mesh)
+	calculate_normals(&mesh)
+	return mesh
 }
 
-// split_faces_at_centroid keeps the legacy surface-indexed name; it quad-
-// subdivides the surface's first face.
-split_faces_at_centroid :: proc(mesh: ^Mesh, surface_index: int) {
-	subdivide_face(mesh, mesh.surfaces[surface_index].first_face)
-}
-
-// --- Inset / Extrude ------------------------------------------------------
-//
-// Both build a new ring of vertices from a face loop and bridge the old and new
-// rings with quads. Inset keeps the ring coplanar (pulled toward the centroid);
-// extrude offsets the ring along a vector. In both cases the original face is
-// reused as the inner/cap face, so the operation is purely additive.
-
-// inset_face shrinks a face inward by `distance`, leaving a border ring of quads
-// around a smaller inner face (the original face, repointed to the inner ring).
-inset_face :: proc(mesh: ^Mesh, face_index: int, distance: f64) {
-	H := face_loop_edges(mesh, face_index, context.temp_allocator)
-	n := len(H)
-	if n < 3 do return
-	V := make([]int, n, context.temp_allocator)
-	for k in 0 ..< n do V[k] = mesh.edges[H[k]].vertex
-
-	centroid := face_centroid(mesh, face_index)
-
-	// Inner ring: each outer vertex pulled toward the centroid by `distance`.
-	I := make([]int, n, context.temp_allocator)
-	for k in 0 ..< n {
-		pos := mesh.vertices[V[k]].position
-		to_c := centroid - pos
-		l := linalg.length(to_c)
-		t := l > 1e-9 ? clamp(distance / l, 0, 1) : 0
-		I[k] = _add_vertex(mesh, pos + to_c * t)
-	}
-
-	// Inner face reuses face_index. Its loop is inner[k]: I[k-1] -> I[k].
-	inner := make([]int, n, context.temp_allocator)
-	for k in 0 ..< n do inner[k] = _add_edge(mesh, I[k], face_index)
-	for k in 0 ..< n {
-		_link(mesh, inner[(k - 1 + n) % n], inner[k])
-	}
-	mesh.faces[face_index].half_edge = inner[0]
-
-	// Border quad per outer edge: V[k-1] -> V[k] -> I[k] -> I[k-1].
-	for k in 0 ..< n {
-		kp := (k - 1 + n) % n
-		a := H[k]                       // V[k-1] -> V[k]  (reused)
-		b := _add_edge(mesh, I[k], 0)   // V[k]   -> I[k]
-		c := _add_edge(mesh, I[kp], 0)  // I[k]   -> I[k-1]
-		d := _add_edge(mesh, V[kp], 0)  // I[k-1] -> V[k-1]
-
-		fi := _add_face(mesh, a)
-		mesh.edges[a].face = fi
-		mesh.edges[b].face = fi
-		mesh.edges[c].face = fi
-		mesh.edges[d].face = fi
-		mesh.faces[fi].half_edge = a
-
-		_link(mesh, a, b)
-		_link(mesh, b, c)
-		_link(mesh, c, d)
-		_link(mesh, d, a)
-	}
-
-	rebuild_twins(mesh)
-	refresh(mesh)
-}
-
-// extrude_face lifts a face along `offset`, creating side walls connecting the
-// original boundary to the offset cap (the original face, repointed upward).
-extrude_face :: proc(mesh: ^Mesh, face_index: int, offset: [3]f64) {
-	H := face_loop_edges(mesh, face_index, context.temp_allocator)
-	n := len(H)
-	if n < 3 do return
-	V := make([]int, n, context.temp_allocator)
-	for k in 0 ..< n do V[k] = mesh.edges[H[k]].vertex
-
-	// Cap ring: each boundary vertex duplicated and offset.
-	T := make([]int, n, context.temp_allocator)
-	for k in 0 ..< n {
-		T[k] = _add_vertex(mesh, mesh.vertices[V[k]].position + offset)
-	}
-
-	// Cap face reuses face_index. Its loop is cap[k]: T[k-1] -> T[k].
-	cap := make([]int, n, context.temp_allocator)
-	for k in 0 ..< n do cap[k] = _add_edge(mesh, T[k], face_index)
-	for k in 0 ..< n {
-		_link(mesh, cap[(k - 1 + n) % n], cap[k])
-	}
-	mesh.faces[face_index].half_edge = cap[0]
-
-	// Side wall per boundary edge: V[k-1] -> V[k] -> T[k] -> T[k-1].
-	for k in 0 ..< n {
-		kp := (k - 1 + n) % n
-		a := H[k]                       // V[k-1] -> V[k]  (reused; keeps base twin)
-		b := _add_edge(mesh, T[k], 0)   // V[k]   -> T[k]
-		c := _add_edge(mesh, T[kp], 0)  // T[k]   -> T[k-1]
-		d := _add_edge(mesh, V[kp], 0)  // T[k-1] -> V[k-1]
-
-		fi := _add_face(mesh, a)
-		mesh.edges[a].face = fi
-		mesh.edges[b].face = fi
-		mesh.edges[c].face = fi
-		mesh.edges[d].face = fi
-		mesh.faces[fi].half_edge = a
-
-		_link(mesh, a, b)
-		_link(mesh, b, c)
-		_link(mesh, c, d)
-		_link(mesh, d, a)
-	}
-
-	rebuild_twins(mesh)
-	refresh(mesh)
-}
-
-// --- Legacy surface-indexed wrappers -------------------------------------
-
-translate_surface :: proc(mesh: ^Mesh, surface_index: int, translation: [3]f64) {
-	translate_face(mesh, mesh.surfaces[surface_index].first_face, translation)
-}
-
-extrude_surface :: proc(mesh: ^Mesh, surface_index: int, vector: [3]f64) {
-	extrude_face(mesh, mesh.surfaces[surface_index].first_face, vector)
-}
-
-inset_surface :: proc(mesh: ^Mesh, surface_index: int, distance: f64) {
-	inset_face(mesh, mesh.surfaces[surface_index].first_face, distance)
-}
-
-// --- Unimplemented stubs (not required by the mesh modeler) ---------------
+// --- Unimplemented primitive stubs ----------------------------------------
 
 from_sphere :: proc(radius: f64, allocator := context.allocator) -> Mesh { return {} }
 from_capsule :: proc(length, radius: f64, allocator := context.allocator) -> Mesh { return {} }
-add_surface_from_contours :: proc(mesh: ^Mesh, contours: [][][3]f64, plane_normal: [3]f64, allocator := context.allocator) {}
-bevel_surface :: proc(mesh: ^Mesh, surface_index: int, distance: f64) {}
-bevel_edge :: proc(mesh: ^Mesh, edge_index: int, distance: f64) {}
-calculate_uvs :: proc(mesh: ^Mesh) {}
 
-// --- Structural Analysis Routines ---
+// --- Normals --------------------------------------------------------------
 
 calculate_normals :: proc(mesh: ^Mesh) {
 	// Reset current vertex normals
@@ -621,26 +366,90 @@ calculate_normals :: proc(mesh: ^Mesh) {
 	}
 }
 
-// --- Compilation Pipeline Pass: Bake ---
+// --- UVs ------------------------------------------------------------------
+
+// calculate_uvs assigns per-corner UVs by orthographically projecting every face
+// onto its own plane (a tangent frame built from the face normal). This is exact
+// for planar faces and gives each face its own UV island; it overwrites any UVs
+// set by a primitive factory, so prefer the factory's own unwrap (e.g.
+// from_polygon3) when a continuous layout matters.
+calculate_uvs :: proc(mesh: ^Mesh) {
+	for fi in 0 ..< len(mesh.faces) {
+		nrm := _face_plane(mesh, fi).xyz
+		up: [3]f64 = {0, 0, 1}
+		if abs(nrm.z) >= 0.999 do up = {0, 1, 0}
+		tan := linalg.normalize(linalg.cross(up, nrm))
+		bit := linalg.cross(nrm, tan)
+
+		start  := mesh.faces[fi].half_edge
+		origin := mesh.vertices[mesh.edges[start].vertex].position
+		e := start
+		for {
+			rel := mesh.vertices[mesh.edges[e].vertex].position - origin
+			mesh.edges[e].uv = {linalg.dot(rel, tan), linalg.dot(rel, bit)}
+			e = mesh.edges[e].next
+			if e == start do break
+		}
+	}
+}
+
+// _triangle_tangent derives a tangent vector for a triangle from its UV gradient
+// (the standard Lengyel construction). The returned xyz is orthonormalized
+// against `n`; w is the handedness sign for reconstructing the bitangent. Falls
+// back to an arbitrary axis orthogonal to `n` when the UVs are degenerate.
+@(private)
+_triangle_tangent :: proc(p0, p1, p2: [3]f64, uv0, uv1, uv2: [2]f64, n: [3]f64) -> [4]f64 {
+	e1  := p1 - p0
+	e2  := p2 - p0
+	du1 := uv1 - uv0
+	du2 := uv2 - uv0
+	det := du1.x * du2.y - du2.x * du1.y
+
+	if abs(det) < 1e-12 {
+		ref: [3]f64 = {1, 0, 0}
+		if abs(n.x) > 0.9 do ref = {0, 1, 0}
+		t := linalg.normalize(linalg.cross(ref, n))
+		return {t.x, t.y, t.z, 1}
+	}
+
+	r := 1.0 / det
+	t := (e1 * du2.y - e2 * du1.y) * r
+	b := (e2 * du1.x - e1 * du2.x) * r
+
+	// Gram-Schmidt orthogonalize the tangent against the normal.
+	t = t - n * linalg.dot(n, t)
+	if linalg.length(t) > 1e-12 do t = linalg.normalize(t)
+	w: f64 = linalg.dot(linalg.cross(n, t), b) < 0 ? -1 : 1
+	return {t.x, t.y, t.z, w}
+}
+
+// --- Compilation Pipeline Pass: Bake --------------------------------------
 
 bake :: proc(mesh: Mesh, allocator := context.allocator) -> Indexed_Mesh {
 	out_vertices := make([dynamic][4]f64, 0, 128, context.temp_allocator)
 	out_normals  := make([dynamic][4]f64, 0, 128, context.temp_allocator)
+	out_uvs      := make([dynamic][2]f64, 0, 128, context.temp_allocator)
+	out_tangents := make([dynamic][4]f64, 0, 128, context.temp_allocator)
 	out_indices  := make([dynamic]u32, 0, 256, context.temp_allocator)
 
-	// Keep track of which vertex data has already been emitted per face to handle flat shading
+	// Keep track of which vertex data has already been emitted per face to handle
+	// flat shading and per-corner UV seams.
 	Face_Vertex_Pair :: struct { v_idx, f_idx: int }
 	v_map := make(map[Face_Vertex_Pair]u32, 64, context.temp_allocator)
 
 	for f_idx in 0 ..< len(mesh.faces) {
 		face := mesh.faces[f_idx]
 
+		// Walk the loop, recording both the vertex and the half-edge for each
+		// corner (the half-edge carries that corner's UV).
 		face_v_indices := make([dynamic]int, 0, 16, context.temp_allocator)
+		face_e_indices := make([dynamic]int, 0, 16, context.temp_allocator)
 		start_edge := face.half_edge
 		curr_edge := start_edge
 
 		for {
 			append(&face_v_indices, mesh.edges[curr_edge].vertex)
+			append(&face_e_indices, curr_edge)
 			curr_edge = mesh.edges[curr_edge].next
 			if curr_edge == start_edge do break
 		}
@@ -648,23 +457,35 @@ bake :: proc(mesh: Mesh, allocator := context.allocator) -> Indexed_Mesh {
 		if len(face_v_indices) < 3 do continue
 
 		for i in 1 ..< len(face_v_indices) - 1 {
-			tri_v_indices := [3]int{ face_v_indices[0], face_v_indices[i], face_v_indices[i+1] }
+			tri_v := [3]int{ face_v_indices[0], face_v_indices[i], face_v_indices[i+1] }
+			tri_e := [3]int{ face_e_indices[0], face_e_indices[i], face_e_indices[i+1] }
 
-			for v_idx in tri_v_indices {
+			p0 := mesh.vertices[tri_v[0]].position
+			p1 := mesh.vertices[tri_v[1]].position
+			p2 := mesh.vertices[tri_v[2]].position
+			n  := linalg.normalize(linalg.cross(p1 - p0, p2 - p0))
+
+			uv0 := mesh.edges[tri_e[0]].uv
+			uv1 := mesh.edges[tri_e[1]].uv
+			uv2 := mesh.edges[tri_e[2]].uv
+			tangent := _triangle_tangent(p0, p1, p2, uv0, uv1, uv2, n)
+
+			for k in 0 ..< 3 {
+				v_idx := tri_v[k]
+				e_idx := tri_e[k]
 				pair := Face_Vertex_Pair{v_idx, f_idx}
 
 				if baked_idx, exists := v_map[pair]; exists {
 					append(&out_indices, baked_idx)
 				} else {
 					new_idx := u32(len(out_vertices))
+					pos := mesh.vertices[v_idx].position
+					uv  := mesh.edges[e_idx].uv
 
-					p0 := mesh.vertices[tri_v_indices[0]].position
-					p1 := mesh.vertices[tri_v_indices[1]].position
-					p2 := mesh.vertices[tri_v_indices[2]].position
-					n  := linalg.normalize(linalg.cross(p1 - p0, p2 - p0))
-
-					append(&out_vertices, [4]f64{mesh.vertices[v_idx].position.x, mesh.vertices[v_idx].position.y, mesh.vertices[v_idx].position.z, 1.0})
+					append(&out_vertices, [4]f64{pos.x, pos.y, pos.z, 1.0})
 					append(&out_normals,  [4]f64{n.x, n.y, n.z, 0.0})
+					append(&out_uvs,      uv)
+					append(&out_tangents, tangent)
 					append(&out_indices,  new_idx)
 
 					v_map[pair] = new_idx
@@ -680,6 +501,8 @@ bake :: proc(mesh: Mesh, allocator := context.allocator) -> Indexed_Mesh {
 	for i in 0 ..< len(out_vertices) {
 		baked_mesh.vertices[i].position = [3]f32{f32(out_vertices[i].x), f32(out_vertices[i].y), f32(out_vertices[i].z)}
 		baked_mesh.vertices[i].normal   = [3]f32{f32(out_normals[i].x),  f32(out_normals[i].y),  f32(out_normals[i].z)}
+		baked_mesh.vertices[i].uv       = [2]f32{f32(out_uvs[i].x), f32(out_uvs[i].y)}
+		baked_mesh.vertices[i].tangent  = [4]f32{f32(out_tangents[i].x), f32(out_tangents[i].y), f32(out_tangents[i].z), f32(out_tangents[i].w)}
 	}
 	copy(baked_mesh.indices, out_indices[:])
 
