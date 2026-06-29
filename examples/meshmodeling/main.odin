@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:fmt"
 import rl "vendor:raylib"
 import "../../mesh"
+import "../../intersect"
 import "../../rect"
 
 WIDTH  :: 1280
@@ -162,19 +163,118 @@ mouse_ray_f64 :: proc(camera: rl.Camera3D) -> (origin, dir: [3]f64) {
 	return
 }
 
+// --- Selection policy (owned by the app, not the mesh library) ------------
+//
+// The mesh package exposes geometry (vertices, edges, and get_triangles for
+// faces); how a click resolves to a selected element is a UX decision and lives
+// here. Face picking runs true ray-triangle intersection over get_triangles;
+// for larger meshes the same triangles could be downcast to f32 and fed into
+// algo/bvh instead of this brute-force scan. Vertex and edge picking use
+// nearest-perpendicular-distance-to-ray (closest hover), preferring nearer hits
+// on ties.
+
+ray_point_dist2 :: proc(origin, dir, p: [3]f64) -> (t, dist2: f64) {
+	dd := linalg.dot(dir, dir)
+	if dd < 1e-12 do return 0, 1.0e30
+	t = linalg.dot(p - origin, dir) / dd
+	if t < 0 do t = 0
+	diff := p - (origin + dir * t)
+	return t, linalg.dot(diff, diff)
+}
+
+// distance squared between an infinite-forward ray and a finite segment.
+ray_segment_dist2 :: proc(origin, dir, p0, p1: [3]f64) -> (dist2: f64, t: f64) {
+	u := dir
+	v := p1 - p0
+	w0 := origin - p0
+	a := linalg.dot(u, u)
+	b := linalg.dot(u, v)
+	c := linalg.dot(v, v)
+	d := linalg.dot(u, w0)
+	e := linalg.dot(v, w0)
+	denom := a * c - b * b
+
+	sc, tc: f64
+	if denom < 1e-12 {
+		sc = 0
+		tc = c > 1e-12 ? e / c : 0
+	} else {
+		sc = (b * e - c * d) / denom
+		tc = (a * e - b * d) / denom
+	}
+	if sc < 0 do sc = 0           // clamp ray to t >= 0
+	tc = clamp(tc, 0, 1)          // clamp to segment
+	pr := origin + u * sc
+	ps := p0 + v * tc
+	diff := pr - ps
+	return linalg.dot(diff, diff), sc
+}
+
+pick_vertex :: proc(m: ^mesh.Mesh, origin, dir: [3]f64) -> (vertex_idx: int, hit: bool) {
+	best_d2: f64 = 1.0e30
+	best_t: f64 = 1.0e30
+	best := -1
+	for vi in 0 ..< len(m.vertices) {
+		t, d2 := ray_point_dist2(origin, dir, m.vertices[vi].position)
+		if d2 < best_d2 - 1e-9 || (abs(d2 - best_d2) <= 1e-9 && t < best_t) {
+			best_d2 = d2
+			best_t = t
+			best = vi
+		}
+	}
+	if best < 0 do return -1, false
+	return best, true
+}
+
+pick_edge :: proc(m: ^mesh.Mesh, origin, dir: [3]f64) -> (edge_idx: int, hit: bool) {
+	best_d2: f64 = 1.0e30
+	best_t: f64 = 1.0e30
+	best := -1
+	for ei in 0 ..< len(m.edges) {
+		tw := m.edges[ei].twin
+		if tw >= 0 && tw < ei do continue // already tested from the twin side
+		v0, v1 := mesh.edge_endpoints(m, ei)
+		p0 := m.vertices[v0].position
+		p1 := m.vertices[v1].position
+		d2, t := ray_segment_dist2(origin, dir, p0, p1)
+		if d2 < best_d2 - 1e-9 || (abs(d2 - best_d2) <= 1e-9 && t < best_t) {
+			best_d2 = d2
+			best_t = t
+			best = ei
+		}
+	}
+	if best < 0 do return -1, false
+	return best, true
+}
+
+pick_face :: proc(m: ^mesh.Mesh, origin, dir: [3]f64) -> (face_idx: int, hit: bool) {
+	tris := mesh.get_triangles(m, context.temp_allocator)
+	best_t: f64 = 1.0e30
+	best := -1
+	for tri in tris {
+		h, tt := intersect.ray_triangle(origin, dir, tri.v0, tri.v1, tri.v2, best_t)
+		if h && tt < best_t {
+			best_t = tt
+			best = tri.face
+		}
+	}
+	if best < 0 do return -1, false
+	return best, true
+}
+
 pick_element :: proc(state: ^App_State, camera: rl.Camera3D) {
 	origin, dir := mouse_ray_f64(camera)
 	switch state.active_mode {
 	case .Vertex:
-		if idx, ok := mesh.ray_pick_vertex(&state.canvas, origin, dir); ok {
+		if idx, ok := pick_vertex(&state.canvas, origin, dir); ok {
 			state.selection = {active = true, index = idx}
 		}
 	case .Edge:
-		if idx, ok := mesh.ray_pick_edge(&state.canvas, origin, dir); ok {
+		if idx, ok := pick_edge(&state.canvas, origin, dir); ok {
 			state.selection = {active = true, index = idx}
 		}
 	case .Face:
-		if idx, _, ok := mesh.ray_pick_face(&state.canvas, origin, dir); ok {
+		if idx, ok := pick_face(&state.canvas, origin, dir); ok {
 			state.selection = {active = true, index = idx}
 		}
 	}

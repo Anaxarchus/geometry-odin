@@ -3,7 +3,6 @@ package mesh
 import "core:math/linalg"
 
 import "../plane"
-import "../intersect"
 import "../types"
 
 // {x, y, z, d}
@@ -295,112 +294,45 @@ from_box :: proc(size: [3]f64, allocator := context.allocator) -> Mesh {
 	return mesh
 }
 
-// --- Picking / Selection --------------------------------------------------
+// --- Triangulation / Queries ----------------------------------------------
 //
-// Selection runs against the topological mesh (not the baked render mesh, which
-// discards the vertex->topology mapping). All three return the relevant element
-// index plus a hit flag. Rays are P(t) = origin + dir*t with t > 0 in front.
+// The mesh package exposes geometry; it does not implement picking or selection.
+// Ray-vs-element intersection, nearest-element-to-ray hover policy, screen-space
+// thresholds and tie-breaking are caller concerns. get_triangles is the bridge:
+// it hands callers a triangle soup they can intersect however they like.
 
-// ray_pick_face fan-triangulates every face and returns the nearest one hit.
-ray_pick_face :: proc(mesh: ^Mesh, origin, dir: [3]f64) -> (face_idx: int, t: f64, hit: bool) {
-	best_t: f64 = 1.0e30
-	best := -1
+// A single triangle emitted by get_triangles, tagged with the index of the face
+// it was fan-triangulated from so a hit can be mapped back to topology.
+Mesh_Triangle :: struct {
+	v0, v1, v2: [3]f64,
+	face:       int,
+}
+
+// get_triangles fan-triangulates every face into a flat triangle list, tagging
+// each triangle with its source face index. It is the query-friendly counterpart
+// to bake(): it preserves the face->topology mapping that bake() discards and
+// returns world-space f64 positions, so callers can run exact intersection tests
+// at full precision, or downcast to f32 and feed the triangles into algo/bvh for
+// accelerated picking on larger meshes. The caller owns the returned slice.
+//
+// Triangulation is a simple fan from each face's first vertex, so results are
+// exact only for convex faces; hits on non-convex n-gons may be approximate.
+get_triangles :: proc(mesh: ^Mesh, allocator := context.allocator) -> []Mesh_Triangle {
+	tris := make([dynamic]Mesh_Triangle, 0, len(mesh.faces) * 2, allocator)
 	for fi in 0 ..< len(mesh.faces) {
 		verts := face_vertices(mesh, fi, context.temp_allocator)
 		if len(verts) < 3 do continue
 		p0 := mesh.vertices[verts[0]].position
 		for i in 1 ..< len(verts) - 1 {
-			p1 := mesh.vertices[verts[i]].position
-			p2 := mesh.vertices[verts[i + 1]].position
-			h, tt := intersect.ray_triangle(origin, dir, p0, p1, p2, best_t)
-			if h && tt < best_t {
-				best_t = tt
-				best = fi
-			}
+			append(&tris, Mesh_Triangle{
+				v0   = p0,
+				v1   = mesh.vertices[verts[i]].position,
+				v2   = mesh.vertices[verts[i + 1]].position,
+				face = fi,
+			})
 		}
 	}
-	if best < 0 do return -1, 0, false
-	return best, best_t, true
-}
-
-@(private)
-_ray_point_dist2 :: proc(origin, dir, p: [3]f64) -> (t, dist2: f64) {
-	dd := linalg.dot(dir, dir)
-	if dd < 1e-12 do return 0, 1.0e30
-	t = linalg.dot(p - origin, dir) / dd
-	if t < 0 do t = 0
-	diff := p - (origin + dir * t)
-	return t, linalg.dot(diff, diff)
-}
-
-// ray_pick_vertex returns the vertex whose perpendicular distance to the ray is
-// smallest (closest hover), preferring nearer hits on ties.
-ray_pick_vertex :: proc(mesh: ^Mesh, origin, dir: [3]f64) -> (vertex_idx: int, hit: bool) {
-	best_d2: f64 = 1.0e30
-	best_t: f64 = 1.0e30
-	best := -1
-	for vi in 0 ..< len(mesh.vertices) {
-		t, d2 := _ray_point_dist2(origin, dir, mesh.vertices[vi].position)
-		if d2 < best_d2 - 1e-9 || (abs(d2 - best_d2) <= 1e-9 && t < best_t) {
-			best_d2 = d2
-			best_t = t
-			best = vi
-		}
-	}
-	if best < 0 do return -1, false
-	return best, true
-}
-
-// distance squared between an infinite-forward ray and a finite segment.
-@(private)
-_ray_segment_dist2 :: proc(origin, dir, p0, p1: [3]f64) -> (dist2: f64, t: f64) {
-	u := dir
-	v := p1 - p0
-	w0 := origin - p0
-	a := linalg.dot(u, u)
-	b := linalg.dot(u, v)
-	c := linalg.dot(v, v)
-	d := linalg.dot(u, w0)
-	e := linalg.dot(v, w0)
-	denom := a * c - b * b
-
-	sc, tc: f64
-	if denom < 1e-12 {
-		sc = 0
-		tc = c > 1e-12 ? e / c : 0
-	} else {
-		sc = (b * e - c * d) / denom
-		tc = (a * e - b * d) / denom
-	}
-	if sc < 0 do sc = 0           // clamp ray to t >= 0
-	tc = clamp(tc, 0, 1)          // clamp to segment
-	pr := origin + u * sc
-	ps := p0 + v * tc
-	diff := pr - ps
-	return linalg.dot(diff, diff), sc
-}
-
-// ray_pick_edge returns a half-edge of the edge nearest the ray. Each undirected
-// edge is tested once (the half-edge with the smaller index of the twin pair).
-ray_pick_edge :: proc(mesh: ^Mesh, origin, dir: [3]f64) -> (edge_idx: int, hit: bool) {
-	best_d2: f64 = 1.0e30
-	best_t: f64 = 1.0e30
-	best := -1
-	for ei in 0 ..< len(mesh.edges) {
-		tw := mesh.edges[ei].twin
-		if tw >= 0 && tw < ei do continue // already tested from the twin side
-		v0, v1 := edge_endpoints(mesh, ei)
-		p0 := mesh.vertices[v0].position
-		p1 := mesh.vertices[v1].position
-		d2, t := _ray_segment_dist2(origin, dir, p0, p1)
-		if d2 < best_d2 - 1e-9 || (abs(d2 - best_d2) <= 1e-9 && t < best_t) {
-			best_d2 = d2
-			best_t = t
-			best = ei
-		}
-	}
-	if best < 0 do return -1, false
-	return best, true
+	return tris[:]
 }
 
 // --- Translation Operations ----------------------------------------------
